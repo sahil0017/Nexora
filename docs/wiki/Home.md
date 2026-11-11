@@ -7,6 +7,7 @@ Welcome to the **NEXORA** engineering & product wiki. This wiki documents the co
 ## Wiki Pages
 
 - **[Mobility Architecture & 12 Digital Twin Pillars](Mobility-Architecture-and-12-Pillars.md)** — Deep technical breakdown of all 5 Core ML Pillars, all 12 City Movement Digital Twin & Privacy Pillars, and Zero-Hardcoding principles.
+- **[Finance Intelligence Network & Technical Architecture](Finance-Intelligence-and-Architecture.md)** — Complete specification and end-to-end technical architecture for all 15 Finance Intelligence Domains (163 engines), Cross-Engine DAGs, Knowledge Graph, Opportunity Radar, Multi-Agent AI CFO, What-If Lab, and Evidence Engine.
 - **[API & PostGIS Database Reference](API-and-Database-Reference.md)** — Complete Go REST (`/api/v1/move/*`), Python FastAPI (`/v1/*`), OpenStreetMap Overpass/Nominatim, and SQL migration (`0001`–`0005`) catalog.
 - **[Mobile UX & Fullscreen Navigation](Mobile-UX-and-Navigation.md)** — Pre/During/Post-trip intelligence, Rapido-style fullscreen navigation cockpit, Quick Actions, Live Radar Digital Twin lens, Urban What-If Simulator, and Multilingual Copilot.
 - **[AWS Production & LAN Deployment Runbook](Deployment-and-LAN-Runbook.md)** — CloudFormation + ECR + RDS + Caddy HTTPS deployment, Expo LAN serving, and test verification suite.
