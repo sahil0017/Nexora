@@ -515,37 +515,75 @@ Every analytical claim and CFO recommendation carries a machine-verifiable `Evid
 
 ---
 
-## 7. Data Architecture & PostgreSQL Schema Blueprint
+## 7. Data Architecture & PostgreSQL Schema (`0006_finance_intelligence`)
 
-NEXORA already defines `finance.accounts`, `finance.transactions`, `finance.categories`, `finance.budgets`, and `finance.budget_entries` in [`platform/api/migrations/0001_initial_schema.up.sql`](../../platform/api/migrations/0001_initial_schema.up.sql). Below is the complete data model extension (`0006_finance_intelligence.up.sql`) required to support all 15 domains and 163 engines:
+NEXORA already defines `finance.accounts`, `finance.transactions`, `finance.categories`, `finance.budgets`, and `finance.budget_entries` in [`platform/api/migrations/0001_initial_schema.up.sql`](../../platform/api/migrations/0001_initial_schema.up.sql). The finalized schema extension in [`0006_finance_intelligence.up.sql`](../../platform/api/migrations/0006_finance_intelligence.up.sql) (with full symmetric rollback in [`0006_finance_intelligence.down.sql`](../../platform/api/migrations/0006_finance_intelligence.down.sql)) extends `finance.accounts` & `finance.transactions` and adds 41 domain tables:
 
-| Table Group | Proposed Tables (`finance.*`) | Domains Served |
+| Table Group | Finalized Tables (`finance.*`) | Domains Served |
 |---|---|---|
-| **Identity, Consent & Twin** | `finance.financial_profiles`, `finance.consent_artefacts` (AA/FIP/AIS consent IDs, scopes, expiry), `finance.digital_twin_snapshots` (JSONB state + metrics), `finance.coverage_gaps` | Domains 1, 2, 15 |
-| **Banking & Reconciliation** | `finance.balance_history` (partitioned daily), `finance.upi_mandates`, `finance.credit_cards`, `finance.recurring_obligations`, `finance.reconciliation_links`, `finance.merchant_catalog` | Domains 2, 11, 14 |
-| **Assets, Holdings & Markets** | `finance.holdings` (ISIN, units, avg cost, asset class, domicile, currency), `finance.tax_lots` (FIFO acquisition date, grandfathered FMV, lock-in date), `finance.physical_assets` (gold, real estate), `finance.market_instruments` (NSE/BSE/US/EU/MF master + pgvector filings), `finance.market_prices_ts` (partitioned OHLCV/NAV/FX) | Domains 3, 4, 5, 6, 13 |
-| **Goals & Wealth Strategy** | `finance.goals` (horizon, target real INR, linked holdings/SIPs, success probability), `finance.allocation_targets` | Domains 1, 3, 12 |
-| **Tax & CA** | `finance.tax_profiles` (FY, regime, employer category, residential status), `finance.tax_deductions`, `finance.tds_entries`, `finance.gst_ledger`, `finance.tax_deadlines`, `finance.parsed_documents` (S3/DynamoDB encrypted refs + extraction confidence) | Domain 7 |
-| **Debt & Insurance** | `finance.liabilities` (loan type, principal, ROI, benchmark/spread, tenure, foreclosure terms), `finance.credit_reports`, `finance.insurance_policies` (health/term/life/motor clauses, waiting periods, exclusions, nominees), `finance.claim_vault_items` | Domains 8, 9 |
-| **Business & Entrepreneurial** | `finance.business_entities`, `finance.business_metrics_ts` (MRR, burn, CAC, LTV, gross margin, DSO/DPO), `finance.business_scenarios` | Domain 10 |
-| **Risk, Behaviour & Simulation** | `finance.risk_assessments` (VaR, HHI, liquidity tiers, stress results), `finance.behaviour_signals` (impulse/bias/habit metrics), `finance.simulation_runs` (What-If + Monte Carlo parameters & percentile outputs) | Domains 11, 12, 14 |
-| **Platform Intelligence (§17)** | `finance.kg_nodes`, `finance.kg_edges`, `finance.radar_alerts` (deduped opportunities & risk alerts), `finance.market_events`, `finance.evidence_bundles`, `finance.decision_journal` (approved plans & thesis tracking) | Domains 13, 15, §16, §17 |
+| **Accounts & Txn Extensions** | `finance.accounts` (extended with balances, APR, IFSC, masked number, `institution_enc`, `account_number_enc`, consent link, sync status, expanded account types), `finance.transactions` (extended with `txn_type`, `channel`, `source_channel`, `balance_after_txn`, `upi_vpa`, `utr_reference`, `fx_rate_to_inr`, `inr_amount`, `is_internal_transfer`, `reconciliation_group_id`, `income_stream_type`, `tax_section`, `anomaly_score`, `external_txn_id`, plus `*_enc` & `upi_vpa_blind_idx` ciphertext/blind-index columns), `finance.merchants` | Domains 1, 2, 11 |
+| **Identity, Consent, Security & Ingestion** | `finance.financial_profiles`, `finance.consent_artefacts` (AA/FIP/AIS/broker/bureau consents), `finance.user_encryption_keys` (KMS & zero-knowledge DEK wrapping), `finance.ingestion_channels` (vault email aliases, Android notification/SMS, iOS shortcut webhooks, broker OAuth), `finance.digital_twin_snapshots` (JSONB state + health metrics), `finance.coverage_gaps` | Domains 1, 2, 15 |
+| **Banking & Reconciliation** | `finance.balance_history` (with `source` & `is_verified` for alert/statement/replay provenance), `finance.upi_mandates`, `finance.credit_cards`, `finance.recurring_obligations`, `finance.reconciliation_links` | Domains 2, 11, 14 |
+| **Assets, Holdings & Markets** | `finance.market_instruments` (NSE/BSE/AMFI/US/EU/APAC/GIFT/RBI master), `finance.market_prices_ts`, `finance.mf_holdings_constituents` (look-through ISIN weights), `finance.holdings`, `finance.tax_lots` (FIFO lots + 2018 grandfathered FMV), `finance.physical_assets` | Domains 3, 4, 5, 6, 13 |
+| **Goals & Wealth Strategy** | `finance.goals`, `finance.goal_allocations`, `finance.allocation_targets` | Domains 1, 3, 12 |
+| **Tax & CA** | `finance.parsed_documents` (encrypted S3/DynamoDB refs + OCR confidence), `finance.tax_profiles`, `finance.tax_deductions`, `finance.tds_entries`, `finance.tax_deadlines`, `finance.gst_ledger` | Domain 7 |
+| **Debt & Insurance** | `finance.liabilities`, `finance.credit_reports`, `finance.insurance_policies` (health/term/life/motor clauses, exclusions, claim readiness JSONB, `parsed_doc_id`) | Domains 8, 9 |
+| **Business & Entrepreneurial** | `finance.business_entities` (unit economics, valuation), `finance.business_metrics_ts` (monthly P&L, EBITDA, churn, DSO) | Domain 10 |
+| **Risk, Behaviour & Simulation** | `finance.risk_assessments` (VaR, CVaR, HHI, liquidity, DICGC exposure, stress tests), `finance.behaviour_signals`, `finance.simulation_runs` (What-If + Monte Carlo `P10/P50/P90`) | Domains 11, 12, 14 |
+| **Platform Intelligence (§17)** | `finance.evidence_bundles`, `finance.kg_nodes`, `finance.kg_edges`, `finance.market_events`, `finance.radar_alerts`, `finance.decision_journal` | Domains 13, 15, §16, §17 |
 
 *Note*: Cross-cutting agent runs, tool logs, human approvals, and long-term consent-scoped memory reuse the existing `intelligence.agent_runs`, `intelligence.tool_invocations`, `intelligence.action_approvals`, `intelligence.context_references`, and `intelligence.memory_items` tables from [`0001_initial_schema.up.sql`](../../platform/api/migrations/0001_initial_schema.up.sql).
 
 ---
 
-## 8. External Data & Provider Adapter Architecture
+## 8. Zero-AA Real-Time Ingestion, Day-0 Bootstrap & Historic Replay
 
-Following NEXORA's provider-adapter principle (no vendor lock-in), all external integrations sit behind Go interfaces in `platform/api/internal/modules/finance/aggregation/`:
+NEXORA operates in **progressive stages** so users get **real-time credits, debits, balances, live portfolios, and 1–5+ years of financial history from Day 1—without requiring an RBI Account Aggregator (AA) license**, while keeping a clean adapter seam (`BankingAggregator`) to add AA later.
 
-| Category | Interface | India-First & Global Adapters | Fallback / User-Supplied Path |
+### 8.1 What User Info Is Collected (Progressive Tiers) vs. Never Collected
+
+| Tier | User Data Collected | Unlocks |
+|---|---|---|
+| **Tier 1 (Minimum Viable)** | Basic profile (`financial_profiles`), bank/card alert feeds or 3–6 mo PDF/CSV statements, active loans & credit card terms | Personal Net Worth, Live Cash Flow, Credits/Debits, Subscriptions, Debt Strategy, Behaviour |
+| **Tier 2 (Wealth & Protection)** | 1 CAMS/KFintech/NSDL/CDSL Detailed CAS PDF (or Broker OAuth), Insurance policy PDFs, Goals & Physical assets | Equity/MF/Global Overlap, XIRR, FIFO Capital Gains, Insurance Gaps, Risk & Monte Carlo |
+| **Tier 3 (Tax & Business)** | Form 16, AIS/TIS JSON, Form 26AS, GST (`GSTR-1/2B/3B`), Business unit metrics | CA Agent, Old vs New Regime, TDS Reconciliation, Advance Tax, Business Valuation |
+
+**Hard Prohibitions (Never Asked or Stored)**: Bank netbanking passwords, ATM/UPI PINs, OTPs, full 16-digit card numbers, CVVs, or plaintext Aadhaar/PAN in logs or LLM prompts. Statement PDF open-passwords (e.g., DOB+PAN) are used once in RAM to decrypt and immediately discarded.
+
+### 8.2 Real-Time & Historic Ingestion Flow (Zero-AA Startup Stack)
+
+```text
+  [Day-0 Bootstrap (t0 Anchor)]
+   1. Android SMS local backfill / Bank Statement PDF  ──► Sets initial current_balance + past txns
+   2. CAMS/KFintech Detailed CAS + eCAS + AIS JSON     ──► Sets FIFO tax_lots + holdings + TDS
+   3. Backward Ledger Replay:                          ──► Reconstructs multi-year balance_history
+      Balance(d-1) = Balance(d) - Credits(d) + Debits(d)   & historical net worth via market_prices_ts
+                         │
+                         ▼
+  [Real-Time Fast Path (< 5 sec)]                     [Authoritative Truth Path (Monthly/EOD)]
+   - Vault Email Auto-Forwarding (<hash>@vault...)     - Forwarded Bank e-Statement PDFs & eCAS
+   - Android NotificationListenerService (on-device)   - Broker OAuth & AMFI/NSE/FX live feeds
+   - iOS Shortcuts Webhook (/finance/ingest/alert)          │
+                         │                                  ▼
+                         └──────────► Two-Speed Reconciliation Engine ◄──────────┘
+                                       - Snaps current_balance to "Avl Bal" / closing balance
+                                       - Deduplicates via external_txn_id & reconciliation_links
+                                       - Flags internal self-transfers (is_internal_transfer)
+                                       - Steps down loan principal on matched EMI debits
+                                       - Emits finance.twin.updated.v1 -> Live Digital Twin
+```
+
+### 8.3 External Provider Adapters (`platform/api/internal/modules/finance/aggregation/`)
+
+Following NEXORA's provider-adapter principle (no vendor lock-in), all external integrations sit behind Go interfaces:
+
+| Category | Interface | Day-1 Zero-AA Adapters | Production / Post-PMF Adapters |
 |---|---|---|---|
-| **Banking & UPI** | `BankingAggregator` | Sahamati Account Aggregator (Setu / Finvu / Anumati / OneMoney AA TSP) | Encrypted PDF/CSV bank & card statement parser (`storage.go` -> `nexora-ml/nlp`) |
-| **Indian Equities & MF** | `SecuritiesDataProvider` | NSE/BSE market feeds, AMFI NAVALL, MF factsheet ISIN holdings, CAMS/KFintech CAS, CDSL/NSDL eCAS | Manual portfolio CSV/CAS PDF import + cached EOD Redis/Postgres snapshots |
-| **Global Markets & FX** | `GlobalMarketProvider` | US/EU/APAC equities & UCITS ETF feeds, RBI reference rate & ECB/FX spot feeds, Macro series (RBI/FRED) | Cached historical series + manual foreign broker statement import |
-| **Tax & Compliance** | `TaxDocumentProvider` | Income Tax AIS/TIS JSON import, Form 26AS, Form 16 PDF, GSTN GSTR-1/2B/3B | Deterministic manual entry + uploaded PDF OCR extraction |
-| **Credit & Insurance** | `BureauAndPolicyProvider` | CIBIL / Experian consented pull, Insurance Information Bureau / eIA, IRDAI policy wording parser | Uploaded credit report / insurance policy PDF parser |
+| **Banking & UPI** | `BankingAggregator` | Vault Email Forwarding (`email_forward`), Android `NotificationListener` / local SMS, iOS Shortcuts Webhook, Encrypted PDF/CSV parser | Sahamati Account Aggregator FIU via licensed TSP (Setu / Finvu / OneMoney) |
+| **Indian Equities & MF** | `SecuritiesDataProvider` | CAMS/KFintech Detailed CAS, CDSL/NSDL eCAS, Broker OAuth (Kite, Dhan, Upstox, Angel One), AMFI `NAVAll.txt` | Direct RTA / MFCentral APIs + NSE/BSE WebSocket feeds |
+| **Global Markets & FX** | `GlobalMarketProvider` | US/EU/APAC equities & UCITS ETF feeds, RBI reference rate & ECB/FX spot feeds, Macro series (RBI/FRED) | Foreign broker OAuth / CSV statement sync |
+| **Tax & Compliance** | `TaxDocumentProvider` | User-exported Income Tax AIS/TIS JSON, Form 26AS, Form 16 PDF, EPFO Passbook, NPS CRA PDF | Consented GSTN / Tax portal adapters |
+| **Credit & Insurance** | `BureauAndPolicyProvider` | Uploaded CIBIL/Experian report PDF & Insurance Policy wording OCR (`nexora-ml/nlp`) | Consented bureau & IRDAI eIA pulls |
 
 ---
 
@@ -574,23 +612,37 @@ Mounted in [`platform/api/internal/http/routes.go`](../../platform/api/internal/
 - `POST /v1/finance/behaviour/analyze`, `POST /v1/finance/graph/propagate`
 - `POST /v1/finance/radar/scan`, `POST /v1/finance/cfo/reason` (Multi-Agent + Evidence Bundle)
 
-### 9.3 Versioned Redpanda Event Contracts (`contracts/events/`)
+### 9.3 Versioned Event Contracts & Low-Latency Event-Driven Runtime
+
 Extending [`contracts/events/envelope.schema.json`](../../contracts/events/envelope.schema.json) (`^[a-z]+\.[a-z_]+\.v[0-9]+$`):
 - `finance.transaction.ingested.v1` — triggers categorization, UPI/merchant enrichment, anomaly check, subscription detection, and twin update.
 - `finance.holding.synced.v1` — triggers overlap recomputation, FIFO tax-lot update, concentration & currency risk check.
 - `finance.market.event.v1` — triggers Knowledge Graph impact propagation and Continuous Opportunity Radar.
-- `finance.twin.updated.v1` — triggers health score refresh and cross-domain goal/FI recalculation.
+- `finance.twin.updated.v1` — triggers health score refresh, Redis cache invalidation, SSE UI push, and cross-domain goal/FI recalculation.
 - `finance.opportunity.detected.v1` & `finance.risk.alert.v1` — triggers notification delivery after hysteresis deduplication.
 - `finance.approval.requested.v1` — triggers UI approval card for `high_impact` / `external_write` actions.
 
+#### Sub-50ms API & Real-Time Event Execution Checklist
+To keep `nexora-api` fast under `pgxpool` free-tier limits (`MaxConns = 5` in [`postgres.go`](../../platform/api/internal/platform/database/postgres.go)) and eliminate polling lag:
+1. **Thin Write Path (`202 Accepted` in < 15ms)**: Ingestion endpoints (`/finance/ingest/alert`, `/finance/documents/parse`) validate, persist raw records + `EnqueueOutbox()` in one SQL transaction, and return `202` immediately. Heavy OCR, merchant resolution, anomaly scoring, Knowledge Graph propagation, and Digital Twin recomputation execute asynchronously in `nexora-ml` / workers.
+2. **Precomputed Reads (`< 5ms`) + Covering Indexes**: Read endpoints (`/finance/digital-twin`, `/finance/radar/opportunities`) serve precomputed snapshots from Redis ([`redis.go`](../../platform/api/internal/platform/cache/redis.go)) and index-only Postgres scans (`idx_txn_user_rollup` on `finance.transactions`), never running Monte Carlo or overlap matrices synchronously on `GET`.
+3. **Instant Outbox Wakeup ([`outbox.go`](../../platform/api/internal/platform/events/outbox.go))**: Trigger an immediate `OutboxRelay.Notify()` channel (or Postgres `LISTEN/NOTIFY`) on commit instead of waiting for the 5s fallback ticker, and drain with `FOR UPDATE SKIP LOCKED` across replicas.
+4. **Isolated `finance.*` Worker Queue**: Route `finance.*` events to a dedicated Finance consumer in `nexora-ml` (in AWS prod, a dedicated SQS queue subscribed to SNS with `MessageAttributes.event_type` prefix filter `"finance."`; in local dev, direct `ML_SERVICE_URL/v1/events/ingest` or Redpanda `KAFKA_BROKERS`).
+5. **Live Client Push (`GET /api/v1/finance/stream`)**: Publish `finance.twin.updated.v1` and `finance.risk.alert.v1` onto Redis Pub/Sub to push instant updates to the mobile/web UI via SSE/WebSocket.
+
 ---
 
-## 10. Security, Privacy & Regulatory Compliance
+## 10. Anti-Spy Encryption, Privacy & Regulatory Compliance
 
-1. **Field-Level Encryption & Tokenization**: PAN, Aadhaar references, bank account numbers, and policy numbers are encrypted with AWS KMS envelope encryption; LLM contexts receive opaque `context_references` or anonymized buckets, never raw PII.
-2. **Purpose-Limited Consent Ledger**: Sahamati AA tokens and document scopes enforce strict TTL, purpose codes, and instant user revocation (which halts sync jobs and optionally purges derived caches).
-3. **Immutable Audit Trail**: Every AI CFO tool call, deterministic calculation checksum, recommendation `EvidenceBundle`, and user approval decision is logged append-only in `audit.*` and `intelligence.tool_invocations`.
-4. **Regulatory Separation of Concerns**: NEXORA Finance is architected cleanly as a **personal financial intelligence, analytics, and decision-preparation platform**. Any future regulated execution (SEBI IA/RA advisory workflows, direct MF/equity order routing, ITR e-filing submission) plugs behind explicit licensed partner adapters and mandatory `intelligence.action_approvals` gates.
+NEXORA Finance implements a **4-Layer Anti-Spy Architecture** so sensitive financial records remain unreadable to network eavesdroppers, database leaks, curious cloud/DB insiders, and external LLM providers:
+
+1. **Layer 1 — Network & Ingestion Isolation**: TLS 1.3 + certificate pinning on mobile clients; Vault Email ingestion parses strictly filtered bank/card alerts in memory and discards raw emails immediately; Android `NotificationListenerService` filters non-bank notifications locally on-device.
+2. **Layer 2 — Per-User Envelope Encryption & Blind Indexing (`finance.user_encryption_keys`)**:
+   - Each user has an `AES-256-GCM` Data Encryption Key (DEK) wrapped either via AWS KMS (`kms_envelope` mode) or a device passkey/PIN via Argon2id (`zero_knowledge` mode, unreadable even to DB admins).
+   - Sensitive columns (`accounts.institution_enc`, `accounts.account_number_enc`, `transactions.description_enc`, `transactions.upi_vpa_enc`, `transactions.counterparty_enc`, `insurance_policies.policy_number_encrypted`) store ciphertext `BYTEA`; exact deduplication/matching uses keyed HMAC-SHA256 blind indexes (`upi_vpa_blind_idx`, `vault_alias_hash`, `webhook_token_hash`).
+   - Raw PDFs (Form 16, CAS, Statements, Policies) are stored envelope-encrypted in S3/MinIO via `storage_ref`.
+3. **Layer 3 — AI / LLM Privacy Firewall (`ModelGateway`)**: Before any context reaches an external LLM via [`ModelGateway`](../../intelligence/gateway/model_gateway.py), names, PANs, UPI VPAs, and account numbers are pseudonymized (`Bank_A`, `Counterparty_12`) and deterministic math runs locally in Go/Python—never inside an LLM.
+4. **Layer 4 — Device Security & Consent Governance**: Biometric lock (`expo-local-authentication`), Keychain/Keystore secret storage (`expo-secure-store`), screen-capture masking (`FLAG_SECURE`), purpose-limited `consent_artefacts` with instant revocation, immutable `audit.*` trails, and `intelligence.action_approvals` gates for every high-impact action.
 
 ---
 
