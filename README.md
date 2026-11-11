@@ -1,6 +1,6 @@
 # NEXORA — Intelligent Life & Urban Mobility Platform
 
-**Status:** **Mobility Module Complete (M3+ Digital Twin Milestone)** · Deployed live on AWS Free-Tier (`https://43.205.135.43.sslip.io/api/v1`)
+**Status:** **Mobility Module Complete (M3+ Digital Twin Milestone)** 
 
 NEXORA is a multi-module personal intelligence super-app built as a Go modular monolith + independent Python ML service + React Native/Expo mobile & web client. Its flagship **Move (MoveSmart)** engine delivers end-to-end multimodal navigation, real-time hazard & event-aware intelligence, open-source Overpass POI telemetry, pre/during/post-trip automation, and a **12-Pillar City Movement Digital Twin**.
 
