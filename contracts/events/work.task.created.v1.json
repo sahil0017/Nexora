@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/work.task.created/v1",
+  "title": "work.task.created.v1",
+  "type": "object",
+  "required": ["task_id", "user_id", "title"],
+  "properties": {
+    "task_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "title": { "type": "string" },
+    "due_at": { "type": "string", "format": "date-time" },
+    "priority": { "enum": ["low", "medium", "high"] }
+  }
+}

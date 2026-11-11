@@ -1,0 +1,98 @@
+openapi: 3.1.0
+info:
+  title: NEXORA Platform API
+  version: 1.0.0
+  description: >
+    Source of truth for NEXORA HTTP contracts. All modules expose
+    endpoints under /api/v1 with JWT bearer authentication.
+servers:
+  - url: /api/v1
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        "200": { description: OK }
+  /auth/register:
+    post:
+      summary: Create account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        "201": { description: Account created }
+  /auth/login:
+    post:
+      summary: Authenticate
+      responses:
+        "200": { description: Authenticated }
+  /me:
+    get:
+      summary: Current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: User profile }
+  /assistant/conversations:
+    post:
+      summary: Start conversation
+      responses:
+        "201": { description: Conversation created }
+  /assistant/conversations/{id}/messages:
+    post:
+      summary: Send message to assistant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Agent run accepted }
+  /move/journeys/plan:
+    post:
+      summary: Calculate multimodal route alternatives
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, destination]
+              properties:
+                origin:
+                  $ref: "#/components/schemas/GeoPoint"
+                destination:
+                  $ref: "#/components/schemas/GeoPoint"
+                modes:
+                  type: array
+                  items:
+                    enum: [walk, bicycle, two_wheeler, car, bus, metro]
+      responses:
+        "200":
+          description: Journey alternatives
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    GeoPoint:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number }
+        longitude: { type: number }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            retryable: { type: boolean }

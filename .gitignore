@@ -1,0 +1,21 @@
+# Go
+backend/api/nexora-api
+*.test
+
+# Node / RN
+node_modules/
+apps/mobile/android/.gradle/
+apps/mobile/ios/Pods/
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+
+# Env & data
+.env
+models/
+*.sqlite
+
+# OS
+.DS_Store
