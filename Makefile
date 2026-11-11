@@ -1,10 +1,14 @@
-.PHONY: help up down logs build api-test ml-test fmt aws-deploy aws-status aws-session aws-logs aws-restart aws-destroy
+.PHONY: help up down logs build api-test ml-test fmt aws-deploy aws-status aws-stop aws-start aws-session aws-logs aws-restart aws-destroy
 
 # AWS free-tier deployment (requires .env.aws — see infra/aws/env.aws.example)
 aws-deploy:
 	./scripts/deploy-aws.sh deploy
 aws-status:
 	./scripts/deploy-aws.sh status
+aws-stop:
+	./scripts/deploy-aws.sh stop
+aws-start:
+	./scripts/deploy-aws.sh start
 aws-session:
 	./scripts/deploy-aws.sh session
 aws-logs:

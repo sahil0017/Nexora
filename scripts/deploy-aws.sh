@@ -17,6 +17,8 @@
 #   ./scripts/deploy-aws.sh session            # SSM shell on the instance
 #   ./scripts/deploy-aws.sh logs               # tail api/ml logs
 #   ./scripts/deploy-aws.sh restart            # restart services
+#   ./scripts/deploy-aws.sh stop               # smart pause: flush containers, stop EC2 & RDS (keeps state)
+#   ./scripts/deploy-aws.sh start              # smart resume: start RDS & EC2, sync IP/Caddy & verify health
 #   ./scripts/deploy-aws.sh destroy            # tear down (RDS snapshot kept, DynamoDB table kept)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -184,6 +186,103 @@ status() {
   curl -s -m 10 "$url" && echo || echo "(unreachable)"
 }
 
+stack_resource() {
+  "$AWS" cloudformation describe-stack-resources --stack-name "$STACK" \
+    --query "StackResources[?ResourceType=='$1'].PhysicalResourceId | [0]" --output text 2>/dev/null || true
+}
+
+stop_stack() {
+  local iid db_id ec2_state rds_state ssm_ping
+  iid="$(stack_resource AWS::EC2::Instance)"
+  db_id="$(stack_resource AWS::RDS::DBInstance)"
+
+  [ -n "$iid" ] && [ "$iid" != "None" ] || die "EC2 instance not found in stack '$STACK'"
+
+  ec2_state="$("$AWS" ec2 describe-instances --instance-ids "$iid" \
+    --query "Reservations[0].Instances[0].State.Name" --output text 2>/dev/null || echo unknown)"
+  rds_state="none"
+  if [ -n "$db_id" ] && [ "$db_id" != "None" ]; then
+    rds_state="$("$AWS" rds describe-db-instances --db-instance-identifier "$db_id" \
+      --query "DBInstances[0].DBInstanceStatus" --output text 2>/dev/null || echo unknown)"
+  fi
+
+  step "Smart stop for '$STACK' (EC2 $iid=$ec2_state, RDS ${db_id:-none}=$rds_state)"
+
+  # Flush running containers gracefully via SSM before halting EC2 (preserves Redis AOF / DB connections).
+  if [ "$ec2_state" = "running" ]; then
+    ssm_ping="$("$AWS" ssm describe-instance-information --filters "Key=InstanceIds,Values=$iid" \
+      --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null || true)"
+    if [ "$ssm_ping" = "Online" ]; then
+      echo "Gracefully stopping Compose services on EC2 before instance halt..."
+      ssm_run 60 "cd /opt/nexora/current && docker compose -f infra/aws/docker-compose.prod.yml --env-file ./.env.aws stop || true" || true
+    fi
+    echo "Stopping EC2 instance $iid..."
+    "$AWS" ec2 stop-instances --instance-ids "$iid" >/dev/null
+  else
+    echo "EC2 $iid already $ec2_state — skipping stop."
+  fi
+
+  if [ -n "$db_id" ] && [ "$db_id" != "None" ]; then
+    if [ "$rds_state" = "available" ]; then
+      echo "Stopping RDS instance $db_id (AWS keeps storage & auto-starts after 7 days)..."
+      "$AWS" rds stop-db-instance --db-instance-identifier "$db_id" >/dev/null
+    else
+      echo "RDS $db_id currently $rds_state — skipping stop."
+    fi
+  fi
+
+  if [ "$ec2_state" = "running" ]; then
+    echo "Waiting for EC2 $iid to reach stopped state..."
+    "$AWS" ec2 wait instance-stopped --instance-ids "$iid"
+  fi
+  step "Pause complete: EC2=$iid (stopped), RDS=${db_id:-none} (stopping/stopped). Stack preserved."
+}
+
+start_stack() {
+  need_env
+  local iid db_id ec2_state rds_state new_ip
+  iid="$(stack_resource AWS::EC2::Instance)"
+  db_id="$(stack_resource AWS::RDS::DBInstance)"
+
+  [ -n "$iid" ] && [ "$iid" != "None" ] || die "EC2 instance not found in stack '$STACK'"
+
+  ec2_state="$("$AWS" ec2 describe-instances --instance-ids "$iid" \
+    --query "Reservations[0].Instances[0].State.Name" --output text 2>/dev/null || echo unknown)"
+  rds_state="none"
+  if [ -n "$db_id" ] && [ "$db_id" != "None" ]; then
+    rds_state="$("$AWS" rds describe-db-instances --db-instance-identifier "$db_id" \
+      --query "DBInstances[0].DBInstanceStatus" --output text 2>/dev/null || echo unknown)"
+  fi
+
+  step "Smart resume for '$STACK' (EC2 $iid=$ec2_state, RDS ${db_id:-none}=$rds_state)"
+
+  if [ -n "$db_id" ] && [ "$db_id" != "None" ]; then
+    if [ "$rds_state" = "stopped" ]; then
+      echo "Starting RDS instance $db_id..."
+      "$AWS" rds start-db-instance --db-instance-identifier "$db_id" >/dev/null
+    else
+      echo "RDS $db_id currently $rds_state."
+    fi
+  fi
+
+  if [ "$ec2_state" = "stopped" ]; then
+    echo "Starting EC2 instance $iid..."
+    "$AWS" ec2 start-instances --instance-ids "$iid" >/dev/null
+  fi
+
+  echo "Waiting for EC2 $iid..."
+  "$AWS" ec2 wait instance-running --instance-ids "$iid"
+  if [ -n "$db_id" ] && [ "$db_id" != "None" ]; then
+    echo "Waiting for RDS $db_id to become available..."
+    "$AWS" rds wait db-instance-available --db-instance-identifier "$db_id"
+  fi
+
+  wait_ssm
+  deploy_config
+  new_ip="$(stack_output PublicIp)"
+  step "Resume complete. HTTPS API: https://${new_ip}.sslip.io/api/v1/healthz"
+}
+
 destroy() {
   local bucket; bucket="$(stack_output ArtifactsBucket 2>/dev/null || true)"
   if [ -n "$bucket" ] && [ "$bucket" != "None" ]; then
@@ -323,9 +422,11 @@ case "${1:-deploy}" in
   api)     deploy_service api ;;
   ml)      deploy_service ml ;;
   status)  status ;;
+  stop|pause)   stop_stack ;;
+  start|resume) start_stack ;;
   session) "$AWS" ssm start-session --target "$(stack_output InstanceId)" ;;
   logs)    remote_compose "logs --tail 100 api ml" ;;
   restart) remote_compose "restart api ml" ;;
   destroy) destroy ;;
-  *) echo "usage: $0 {smart|migrate|config|infra|redis|caddy|api|ml|deploy|status|session|logs|restart|destroy}"; exit 1 ;;
+  *) echo "usage: $0 {smart|migrate|config|infra|redis|caddy|api|ml|deploy|status|stop|start|session|logs|restart|destroy}"; exit 1 ;;
 esac
