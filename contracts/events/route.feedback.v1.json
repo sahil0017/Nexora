@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/route.feedback/v1",
+  "title": "route.feedback.v1",
+  "type": "object",
+  "required": ["feedback_id", "trip_id", "user_id", "rating"],
+  "properties": {
+    "feedback_id": { "type": "string", "format": "uuid" },
+    "trip_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "rating": { "type": "integer", "minimum": 1, "maximum": 5 }
+  }
+}

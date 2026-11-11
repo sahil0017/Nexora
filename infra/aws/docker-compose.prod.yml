@@ -1,0 +1,148 @@
+# NEXORA — production compose for the free-tier EC2 box (standalone file).
+#
+#   docker compose -f infra/aws/docker-compose.prod.yml --env-file .env.aws up -d
+#
+# Runs: migrate (one-shot, against RDS), redis, api (Go), ml (Python).
+# Postgres is AWS RDS (not containerized). Redpanda is opt-in (`--profile kafka`)
+# because nothing consumes it yet and it would not fit in 1 GB RAM.
+name: nexora
+
+services:
+  # Applies infra/postgres/init.sql (extensions) + migrations to RDS. Idempotent.
+  migrate:
+    image: postgres:16-alpine
+    restart: "no"
+    volumes:
+      - ../../platform/api/migrations:/migrations:ro
+      - ../postgres/init.sql:/init/init.sql:ro
+    environment:
+      PGHOST: ${RDS_ENDPOINT:?RDS_ENDPOINT required}
+      PGPORT: ${RDS_PORT:-5432}
+      PGUSER: ${DB_USERNAME:-nexora}
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
+      PGDATABASE: nexora
+      PGSSLMODE: require
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        until pg_isready -q; do echo "waiting for RDS..."; sleep 3; done
+        psql -v ON_ERROR_STOP=1 -f /init/init.sql
+        psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+        for f in $$(ls /migrations/*.up.sql | sort); do
+          v=$$(basename "$$f" .up.sql)
+          if [ "$$(psql -tAc "SELECT 1 FROM public.schema_migrations WHERE version='$$v'")" = "1" ]; then
+            echo "skip  $$v (already applied)"
+            continue
+          fi
+          echo "apply $$v"
+          psql -v ON_ERROR_STOP=1 --single-transaction -f "$$f" \
+               -c "INSERT INTO public.schema_migrations(version) VALUES ('$$v')"
+        done
+        echo "migrations complete"
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 48mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE required}
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      HTTP_PORT: "8080"
+      DATABASE_URL: postgres://${DB_USERNAME:-nexora}:${DB_PASSWORD}@${RDS_ENDPOINT}:${RDS_PORT:-5432}/nexora?sslmode=require
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-}
+      ML_SERVICE_URL: http://ml:8000
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      DDB_DOCS_TABLE: ${DDB_DOCS_TABLE:?DDB_DOCS_TABLE required}
+      SNS_EVENTS_TOPIC_ARN: ${SNS_EVENTS_TOPIC_ARN:-}
+      SQS_INTELLIGENCE_QUEUE_URL: ${SQS_INTELLIGENCE_QUEUE_URL:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+  ml:
+    image: ${ML_IMAGE:?ML_IMAGE required}
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      DATABASE_URL: postgres://${DB_USERNAME:-nexora}:${DB_PASSWORD}@${RDS_ENDPOINT}:${RDS_PORT:-5432}/nexora?sslmode=require
+      SQS_INTELLIGENCE_QUEUE_URL: ${SQS_INTELLIGENCE_QUEUE_URL:-}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # Opt-in: docker compose ... --profile kafka up -d  (set KAFKA_BROKERS=redpanda:9092)
+  caddy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-43.205.135.43.sslip.io}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  redpanda:
+    profiles: [kafka]
+    image: redpandadata/redpanda:v24.3.6
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "384M"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - internal://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - internal://redpanda:9092
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+
+volumes:
+  redis_data:
+  redpanda_data:
+  caddy_data:
+  caddy_config:

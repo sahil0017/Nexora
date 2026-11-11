@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/location.observed/v1",
+  "title": "location.observed.v1",
+  "type": "object",
+  "required": ["trip_id", "sample_count"],
+  "properties": {
+    "trip_id": { "type": "string", "format": "uuid" },
+    "sample_count": { "type": "integer", "minimum": 1 }
+  }
+}

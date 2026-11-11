@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexora.ai/schemas/events/hazard.reported.v1.json",
+  "title": "hazard.reported.v1",
+  "description": "Published when a road hazard (pothole, damaged road, blocked lane, waterlogging) is detected by computer vision (YOLO/RT-DETR/MobileNet) or reported by a commuter.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "producer",
+    "data"
+  ],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "event_type": { "const": "hazard.reported.v1" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "producer": { "type": "string" },
+    "data": {
+      "type": "object",
+      "required": ["hazard_id", "h3_index", "hazard_type", "severity", "confidence", "lane_impact_factor", "location"],
+      "properties": {
+        "hazard_id": { "type": "string", "format": "uuid" },
+        "h3_index": { "type": "string" },
+        "hazard_type": {
+          "type": "string",
+          "enum": ["pothole", "damaged_road", "blocked_lane", "waterlogging", "other"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "lane_impact_factor": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
+        "model_version": { "type": "string" },
+        "location": {
+          "type": "object",
+          "required": ["latitude", "longitude"],
+          "properties": {
+            "latitude": { "type": "number" },
+            "longitude": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}

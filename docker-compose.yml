@@ -75,7 +75,7 @@ services:
 
   api:
     build:
-      context: ./backend/api
+      context: ./platform/api
     environment:
       APP_ENV: development
       HTTP_PORT: "8080"
@@ -83,6 +83,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       KAFKA_BROKERS: redpanda:9092
       ML_SERVICE_URL: http://ml:8000
+      # Object storage: R2 when configured via .env, otherwise local MinIO.
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-http://minio:9000}
+      STORAGE_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID:-${MINIO_USER:-nexora}}
+      STORAGE_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY:-${MINIO_PASSWORD:-local_minio_password}}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-nexora-dev}
     ports:
       - "8080:8080"
     depends_on:

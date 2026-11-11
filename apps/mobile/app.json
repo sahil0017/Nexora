@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "NEXORA MoveSmart",
+    "slug": "nexora-movesmart",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "nexora",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.nexora.movesmart",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "NEXORA uses your location to plan multimodal routes, find nearby transit stops, and warn about road hazards."
+      }
+    },
+    "android": {
+      "package": "ai.nexora.movesmart",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow NEXORA to access your location for live multimodal routing and road hazard alerts."
+        }
+      ],
+      "expo-asset"
+    ],
+    "updates": {
+      "url": "https://u.expo.dev/b87ce3ad-1f04-42cd-8535-06a913523a33"
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b87ce3ad-1f04-42cd-8535-06a913523a33"
+      }
+    },
+    "owner": "sahkanun"
+  }
+}

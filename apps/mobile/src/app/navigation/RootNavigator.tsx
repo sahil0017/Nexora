@@ -1,14 +1,18 @@
 import React from 'react';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Text } from 'react-native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View } from 'react-native';
 import { colors } from '../theme/tokens';
+import { NavIcon, NavIconName } from '../../shared/components/NavIcons';
 import HomeScreen from '../../features/home/screens/HomeScreen';
 import ExploreScreen from '../../features/explore/screens/ExploreScreen';
 import AssistantScreen from '../../features/assistant/screens/AssistantScreen';
-import ActivityScreen from '../../features/activity/screens/ActivityScreen';
 import ProfileScreen from '../../features/profile/screens/ProfileScreen';
+import MobilityNavigator from '../../features/move/MobilityNavigator';
+import ModuleOverviewScreen from '../../features/explore/screens/ModuleOverviewScreen';
 
+const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 const navTheme = {
@@ -18,41 +22,60 @@ const navTheme = {
     background: colors.bgPrimary,
     card: colors.bgSurface,
     text: colors.textPrimary,
-    primary: colors.accentPrimary,
+    primary: colors.navBlue,
     border: colors.borderSubtle,
   },
 };
 
-const icons: Record<string, string> = {
-  Home: '◉',
-  Explore: '▤',
-  AI: '✦',
-  Activity: '◷',
-  Profile: '☺',
-};
+function Tabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: colors.navBlue,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+        tabBarStyle: {
+          backgroundColor: '#081018',
+          borderTopColor: colors.borderSubtle,
+          borderTopWidth: 1,
+          height: 64,
+          paddingBottom: 8,
+          paddingTop: 6,
+        },
+      }}>
+      <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: tabIcon('Home') }} />
+      <Tab.Screen name="Explore" component={ExploreScreen} options={{ tabBarIcon: tabIcon('Explore') }} />
+      <Tab.Screen name="AI" component={AssistantScreen} options={{ tabBarIcon: tabIcon('AI'), title: 'Copilot' }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: tabIcon('Profile') }} />
+    </Tab.Navigator>
+  );
+}
 
 export default function RootNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
-      <Tab.Navigator
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: colors.accentPrimary,
-          tabBarInactiveTintColor: colors.textSecondary,
-          tabBarStyle: { backgroundColor: colors.bgSurface, borderTopColor: colors.borderSubtle },
-        }}>
-        <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: tabIcon('Home') }} />
-        <Tab.Screen name="Explore" component={ExploreScreen} options={{ tabBarIcon: tabIcon('Explore') }} />
-        <Tab.Screen name="AI" component={AssistantScreen} options={{ tabBarIcon: tabIcon('AI') }} />
-        <Tab.Screen name="Activity" component={ActivityScreen} options={{ tabBarIcon: tabIcon('Activity') }} />
-        <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: tabIcon('Profile') }} />
-      </Tab.Navigator>
+      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+        <Stack.Screen name="Tabs" component={Tabs} />
+        <Stack.Screen name="Mobility" component={MobilityNavigator} />
+        <Stack.Screen name="ModuleHub" component={ModuleOverviewScreen} />
+      </Stack.Navigator>
     </NavigationContainer>
   );
 }
 
-function tabIcon(name: string) {
-  return ({ color, size }: { color: string; size: number }) => (
-    <Text style={{ fontSize: size, color }}>{icons[name]}</Text>
+function tabIcon(name: NavIconName) {
+  return ({ color, focused }: { color: string; size: number; focused: boolean }) => (
+    <View
+      style={{
+        paddingHorizontal: 14,
+        paddingVertical: 4,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: focused ? 'rgba(29, 143, 225, 0.18)' : 'transparent',
+      }}>
+      <NavIcon name={name} color={color} />
+    </View>
   );
 }

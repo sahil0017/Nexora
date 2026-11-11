@@ -13,6 +13,12 @@ paths:
       summary: Liveness probe
       responses:
         "200": { description: OK }
+  /readyz:
+    get:
+      summary: Readiness probe
+      responses:
+        "200": { description: Ready }
+        "503": { description: Dependency unreachable }
   /auth/register:
     post:
       summary: Create account
@@ -39,6 +45,29 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         "200": { description: User profile }
+  /documents:
+    post:
+      summary: Store document (DynamoDB)
+      responses:
+        "201": { description: Document stored }
+    get:
+      summary: List user documents
+      responses:
+        "200": { description: Document list }
+  /documents/{id}:
+    get:
+      summary: Get document by ID
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Document }
+        "404": { description: Not found }
+    delete:
+      summary: Delete document by ID
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
   /assistant/conversations:
     post:
       summary: Start conversation
@@ -65,17 +94,136 @@ paths:
               type: object
               required: [origin, destination]
               properties:
-                origin:
-                  $ref: "#/components/schemas/GeoPoint"
-                destination:
-                  $ref: "#/components/schemas/GeoPoint"
+                origin: { $ref: "#/components/schemas/GeoPoint" }
+                destination: { $ref: "#/components/schemas/GeoPoint" }
+                departure_time: { type: string, format: date-time }
                 modes:
                   type: array
-                  items:
-                    enum: [walk, bicycle, two_wheeler, car, bus, metro]
+                  items: { enum: [walk, bicycle, two_wheeler, car, bus, metro] }
+                preferences:
+                  type: object
+                  properties:
+                    optimize_for: { enum: [FASTEST, RELIABILITY, CHEAPEST, LEAST_WALKING] }
+                    avoid_tolls: { type: boolean }
+                    max_walking_minutes: { type: integer }
       responses:
-        "200":
-          description: Journey alternatives
+        "200": { description: Journey alternatives with ETA ranges }
+  /move/departures/recommend:
+    post:
+      summary: Recommend optimal departure time
+      responses:
+        "200": { description: Recommended departure window }
+  /move/profile:
+    get:
+      summary: Read mobility profile & route preferences
+      responses:
+        "200": { description: Mobility profile }
+    patch:
+      summary: Update mobility profile & route preferences
+      responses:
+        "200": { description: Updated profile }
+  /move/places:
+    get:
+      summary: List saved places
+      responses:
+        "200": { description: Saved places }
+    post:
+      summary: Save a place (home/work/custom)
+      responses:
+        "201": { description: Place saved }
+  /move/trips:
+    post:
+      summary: Start a tracked trip
+      responses:
+        "201": { description: Trip started }
+  /move/trips/{id}:
+    get:
+      summary: Get trip status
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Trip details }
+  /move/trips/{id}/locations:batch:
+    post:
+      summary: Upload batch GPS location samples
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202": { description: Batch accepted }
+  /move/trips/{id}/complete:
+    post:
+      summary: Complete trip
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Trip completed }
+  /move/trips/{id}/updates:
+    get:
+      summary: Get live journey updates and disruption alerts
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Live trip ETA and freshness }
+  /move/traffic/segments:
+    get:
+      summary: Read current traffic conditions by segment_ids or radius
+      responses:
+        "200": { description: Traffic conditions with freshness }
+  /move/traffic/predictions:
+    get:
+      summary: Read future traffic speed forecasts (15/30/60/120 min)
+      responses:
+        "200": { description: Traffic forecasts }
+  /move/transit/stops/nearby:
+    get:
+      summary: Query nearby transit stops via PostGIS
+      responses:
+        "200": { description: Nearby transit stops }
+  /move/transit/departures:
+    get:
+      summary: Read scheduled and GTFS-RT transit departures for a stop
+      responses:
+        "200": { description: Transit departures }
+  /move/insights/commute:
+    get:
+      summary: Read personal mobility insights and learned commute patterns
+      responses:
+        "200": { description: Commute insights }
+  /move/feedback:
+    post:
+      summary: Submit route and ETA feedback
+      responses:
+        "201": { description: Feedback recorded }
+  /move/demand/predict:
+    post:
+      summary: Predict zone mobility demand, surge pressure, and transport availability (TFT / Prophet / XGBoost)
+      responses:
+        "200": { description: Zone demand forecasts }
+  /move/hotspots:
+    post:
+      summary: Discover H3 hexagonal traffic congestion hotspots using HDBSCAN clustering
+      responses:
+        "200": { description: Discovered congestion hotspots }
+  /move/hazards/report:
+    post:
+      summary: Detect and report road hazards (potholes, damaged road, blocked lane, waterlogging) via YOLO / RT-DETR / MobileNet
+      responses:
+        "201": { description: Road hazard detected, persisted, and published to event outbox }
+  /move/hazards/nearby:
+    get:
+      summary: Query active road hazards within a radius via PostGIS
+      responses:
+        "200": { description: Nearby road hazards }
+  /move/assistant/query:
+    post:
+      summary: Multilingual Mobility AI Assistant query (Qwen3 + Whisper + BGE-M3 + Multilingual MiniLM reranker in EN/TE/HI)
+      responses:
+        "200": { description: Grounded multilingual assistant answer }
+  /move/stack/libraries:
+    get:
+      summary: List the 6 open-source mobility engineering layers active in the platform
+      responses:
+        "200": { description: Open-source mobility stack layers }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

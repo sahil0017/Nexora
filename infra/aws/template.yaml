@@ -1,0 +1,431 @@
+# NEXORA — free-tier AWS deployment stack (ap-south-1)
+#
+# Provisions (all AWS Free Tier eligible):
+#   - EC2 t3.micro (standard CPU credits — never bursts into paid "unlimited")
+#       runs Docker: Go API + Python ML + Redis, built on-box and pushed to ECR
+#   - RDS PostgreSQL 16 db.t3.micro, single-AZ, 20 GB gp2, 1-day backups
+#   - DynamoDB documents table (existing on-demand table is reused)
+#   - S3 artifacts bucket (release tarballs, auto-expire after 14 days)
+#   - IAM instance profile scoped to the table / bucket / ECR repos + SSM
+#   - VPC with 2 public subnets (RDS needs 2 AZs; RDS itself is NOT public)
+#
+#   Deploy via:  ./scripts/deploy-aws.sh deploy
+AWSTemplateFormatVersion: "2010-09-09"
+Description: NEXORA free-tier stack - EC2 + RDS PostgreSQL + DynamoDB + S3 + IAM
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedPattern: "[a-z0-9-]+"
+    Description: Short env tag (dev/staging). Used in resource names.
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 x86_64 (matches t3.micro).
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small]
+    Description: t3.micro = 2 vCPU / 1 GB RAM (free tier). t3.small = 2 GB (free-tier eligible, 2x credits).
+  AdminCidr:
+    Type: String
+    Default: ""
+    Description: "Your public IP in CIDR form for SSH, e.g. 1.2.3.4/32. Empty = SSH disabled (SSM still works)."
+  KeyPairName:
+    Type: String
+    Default: ""
+    Description: Existing EC2 key pair name for SSH. Optional (SSM is used for deploys).
+  DocumentsTableName:
+    Type: String
+    Default: nexora-dev-documents
+    Description: Existing DynamoDB table (pk/sk, on-demand). Retained across stack deletes.
+  DBUsername:
+    Type: String
+    Default: nexora
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]{0,15}"
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    AllowedPattern: "[a-zA-Z0-9]+"
+    Description: RDS master password (alphanumeric, 12+ chars).
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 20
+    Description: RDS storage in GB (20 GB is the free-tier max).
+
+Conditions:
+  HasAdminCidr: !Not [!Equals [!Ref AdminCidr, ""]]
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+Resources:
+  # ------------------------------------------------------------------ network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-vpc" }]
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-subnet-a" }]
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-subnet-b" }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-igw" }]
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref RouteTable
+
+  SubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "nexora-${EnvironmentName}-app-sg"
+      GroupDescription: API port + optional SSH; all egress open
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+          Description: NEXORA API
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: ACME HTTP challenge and HTTPS redirect
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: NEXORA HTTPS TLS proxy (Caddy)
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-app-sg" }]
+
+  SshRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasAdminCidr
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AdminCidr
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL from the app instance only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref InstanceSecurityGroup
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-rds-sg" }]
+
+  # --------------------------------------------------------------- database
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: NEXORA RDS subnets (2 AZs required)
+      SubnetIds: [!Ref SubnetA, !Ref SubnetB]
+
+  NexoraDB:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "nexora-${EnvironmentName}-db"
+      DBInstanceClass: db.t3.micro # free tier
+      Engine: postgres
+      EngineVersion: "16"
+      AllocatedStorage: !Ref AllocatedStorage
+      MaxAllocatedStorage: !Ref AllocatedStorage # no autoscaling past free tier
+      StorageType: gp2
+      DBName: nexora
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups: [!Ref RDSSecurityGroup]
+      AvailabilityZone: !GetAtt SubnetA.AvailabilityZone # same AZ as EC2: no cross-AZ data charges
+      MultiAZ: false
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 1
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: false
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-postgres" }]
+
+  # ---------------------------------------------------------------- storage
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "nexora-${EnvironmentName}-artifacts-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-releases
+            Status: Enabled
+            ExpirationInDays: 14
+
+  # --------------------------------------------------- event bus (free tier)
+  EventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "nexora-${EnvironmentName}-events"
+      Tags: [{ Key: Name, Value: !Sub "nexora-${EnvironmentName}-events" }]
+
+  IntelligenceDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "nexora-${EnvironmentName}-intelligence-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  IntelligenceQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "nexora-${EnvironmentName}-intelligence-queue"
+      VisibilityTimeout: 60
+      ReceiveMessageWaitTimeSeconds: 20 # 20s long-polling maximizes AWS Free Tier 1M requests/month
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IntelligenceDLQ.Arn
+        maxReceiveCount: 5
+
+  IntelligenceQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref IntelligenceQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowSNSFanoutToSQS
+            Effect: Allow
+            Principal: { Service: sns.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt IntelligenceQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref EventsTopic
+
+  EventsToIntelligenceSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref EventsTopic
+      Protocol: sqs
+      Endpoint: !GetAtt IntelligenceQueue.Arn
+      RawMessageDelivery: true
+
+  # -------------------------------------------------------------------- IAM
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "nexora-${EnvironmentName}-ec2-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: nexora-app
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DynamoDocuments
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DocumentsTableName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DocumentsTableName}/index/*"
+              - Sid: ReleaseArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Sub "${ArtifactsBucket.Arn}/*"
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrNexoraRepos
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/nexora/*"
+              - Sid: SnsEventPublish
+                Effect: Allow
+                Action: [sns:Publish]
+                Resource: !Ref EventsTopic
+              - Sid: SqsIntelligenceConsumer
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:SendMessage
+                Resource:
+                  - !GetAtt IntelligenceQueue.Arn
+                  - !GetAtt IntelligenceDLQ.Arn
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "nexora-${EnvironmentName}-instance-profile"
+      Roles: [!Ref Ec2Role]
+
+  # ---------------------------------------------------------------- compute
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 2 # containers can reach IMDS for role creds
+        CreditSpecification:
+          CpuCredits: standard # never bill for burst ("unlimited" mode costs money)
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: DefaultRoute
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppLaunchTemplate
+        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref "AWS::NoValue"]
+      SubnetId: !Ref SubnetA
+      SecurityGroupIds: [!Ref InstanceSecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30 # free tier cap
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - { Key: Name, Value: !Sub "nexora-${EnvironmentName}" }
+        - { Key: nexora:role, Value: app }
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/nexora-userdata.log 2>&1
+
+          # 2 GB swap — lets the 1 GB box build images and run API + ML + Redis.
+          if [ ! -f /swapfile ]; then
+            dd if=/dev/zero of=/swapfile bs=1M count=2048
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            echo '/swapfile none swap defaults 0 0' >> /etc/fstab
+          fi
+
+          dnf install -y docker
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+          mkdir -p /opt/nexora
+          echo "BOOTSTRAP_COMPLETE $(date -u +%FT%TZ)" > /opt/nexora/.bootstrap-status
+
+Outputs:
+  InstanceId:
+    Value: !Ref Ec2Instance
+  PublicIp:
+    Value: !GetAtt Ec2Instance.PublicIp
+  AccountId:
+    Value: !Ref "AWS::AccountId"
+  Region:
+    Value: !Ref "AWS::Region"
+  DBEndpoint:
+    Value: !GetAtt NexoraDB.Endpoint.Address
+  DBPort:
+    Value: !GetAtt NexoraDB.Endpoint.Port
+  DocumentsTable:
+    Value: !Ref DocumentsTableName
+  ArtifactsBucket:
+    Value: !Ref ArtifactsBucket
+  EventsTopicArn:
+    Value: !Ref EventsTopic
+  IntelligenceQueueUrl:
+    Value: !Ref IntelligenceQueue
+  ApiUrl:
+    Value: !Sub "http://${Ec2Instance.PublicIp}:8080/api/v1/healthz"
+  HttpsApiUrl:
+    Value: !Sub "https://${Ec2Instance.PublicIp}.sslip.io/api/v1/healthz"

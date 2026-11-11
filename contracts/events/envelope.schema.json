@@ -5,14 +5,39 @@
   "type": "object",
   "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "payload"],
   "properties": {
-    "event_id": { "type": "string", "format": "uuid" },
-    "event_type": { "type": "string", "pattern": "^[a-z]+\\.[a-z_]+\\.v[0-9]+$" },
-    "schema_version": { "type": "integer", "minimum": 1 },
-    "occurred_at": { "type": "string", "format": "date-time" },
-    "ingested_at": { "type": "string", "format": "date-time" },
-    "producer": { "type": "string" },
-    "user_id": { "type": "string", "format": "uuid" },
-    "correlation_id": { "type": "string", "format": "uuid" },
-    "payload": { "type": "object" }
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_type": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z_]+\\.v[0-9]+$"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "payload": {
+      "type": "object"
+    }
   }
 }

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/prediction.generated/v1",
+  "title": "prediction.generated.v1",
+  "type": "object",
+  "required": ["route_id", "model_version", "eta_p50_s"],
+  "properties": {
+    "route_id": { "type": "string", "format": "uuid" },
+    "model_version": { "type": "string" },
+    "is_shadow": { "type": "boolean" },
+    "eta_p50_s": { "type": "integer", "minimum": 1 },
+    "eta_p90_s": { "type": "integer", "minimum": 1 }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/traffic.observed/v1",
+  "title": "traffic.observed.v1",
+  "type": "object",
+  "required": ["segment_id", "speed_kmph", "source", "observed_at"],
+  "properties": {
+    "segment_id": { "type": "string" },
+    "speed_kmph": { "type": "number", "minimum": 0 },
+    "source": { "enum": ["probe", "provider", "gtfs_rt", "user_report"] },
+    "observed_at": { "type": "string", "format": "date-time" }
+  }
+}

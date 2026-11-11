@@ -1,18 +1,22 @@
 [project]
 name = "nexora-ml"
-version = "0.1.0"
-description = "NEXORA intelligence service: prediction models and inference API"
+version = "0.2.0"
+description = "NEXORA 5-pillar mobility intelligence service & AWS SQS event consumer"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
     "pydantic>=2.9.0",
     "numpy>=2.1.0",
-    "pandas>=2.2.0",
-    "torch>=2.5.0",
+    "boto3>=1.35.0",
 ]
 
 [project.optional-dependencies]
+# Full 6-layer open-source training & geospatial stack (for offline training / GPU workers)
+geospatial = ["h3>=4.1.0", "osmnx>=2.0.0", "geopandas>=1.0.0", "movingpandas>=0.20.0"]
+ml = ["torch>=2.5.0", "lightgbm>=4.5.0", "catboost>=1.2.7", "u8darts>=0.31.0", "river>=0.22.0", "hdbscan>=0.8.40"]
+vision = ["onnxruntime>=1.20.0", "opencv-python-headless>=4.10.0"]
+agents = ["langgraph>=0.2.0", "haystack-ai>=2.7.0"]
 dev = ["pytest>=8.0.0", "ruff>=0.7.0"]
 
 [build-system]

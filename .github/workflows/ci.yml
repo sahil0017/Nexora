@@ -14,10 +14,10 @@ jobs:
         with:
           go-version: "1.23"
       - name: Build
-        working-directory: backend/api
+        working-directory: platform/api
         run: go build ./...
       - name: Test
-        working-directory: backend/api
+        working-directory: platform/api
         run: go test ./...
 
   mobile-typecheck:

@@ -1,33 +1,46 @@
-// NEXORA dark design tokens — single source of truth for colors,
-// typography and spacing. Never use inline color literals in features.
+// NEXORA Obsidian + Electric Navigation Blue + Emerald Telemetry design tokens —
+// single source of truth for colors, typography, radii, and spacing across mobile & web.
 export const colors = {
-  bgPrimary: '#0D1422',
-  bgSurface: '#17243A',
-  bgElevated: '#263650',
-  textPrimary: '#F4F7FC',
-  textSecondary: '#AEBBD0',
-  accentPrimary: '#A9C9FF',
-  statusSuccess: '#36B37E',
-  statusWarning: '#E9AC54',
-  statusDanger: '#E36D76',
-  statusInfo: '#A9C9FF',
-  borderSubtle: 'rgba(255,255,255,0.08)',
+  bgPrimary: '#060B10',
+  bgSurface: '#0D151E',
+  bgElevated: '#13202D',
+  bgAccentSubtle: 'rgba(16, 185, 129, 0.14)',
+  textPrimary: '#F0F7FF',
+  textSecondary: '#94A8BE',
+  textMuted: '#607489',
+  accentPrimary: '#10B981',
+  accentBright: '#34D399',
+  navBlue: '#1D8FE1',
+  navBlueDark: '#0C4A82',
+  routeCyan: '#22D3EE',
+  mapBg: '#081018',
+  mapGrid: '#12202E',
+  mapRoad: '#1B2D3F',
+  mapBuilding: '#0E1924',
+  glassSurface: 'rgba(13, 21, 30, 0.92)',
+  glassBorder: 'rgba(56, 189, 248, 0.24)',
+  statusSuccess: '#22C55E',
+  statusWarning: '#F59E0B',
+  statusDanger: '#EF4444',
+  statusInfo: '#38BDF8',
+  borderSubtle: 'rgba(148, 168, 190, 0.16)',
+  borderStrong: 'rgba(29, 143, 225, 0.55)',
 } as const;
 
 export const moduleColors = {
-  move: '#7EC8F2',
-  health: '#7BE0B0',
-  finance: '#F2C879',
-  work: '#C3A9F2',
-  assistant: '#A9C9FF',
+  move: '#1D8FE1',
+  health: '#2DD4BF',
+  finance: '#A3E635',
+  work: '#38BDF8',
+  assistant: '#10B981',
 } as const;
 
 export const typography = {
-  display: { fontSize: 30, fontWeight: '700' as const },
-  screenTitle: { fontSize: 24, fontWeight: '700' as const },
-  sectionHeading: { fontSize: 17, fontWeight: '600' as const },
-  body: { fontSize: 15, fontWeight: '400' as const },
-  label: { fontSize: 12.5, fontWeight: '500' as const },
+  display: { fontSize: 30, fontWeight: '800' as const, letterSpacing: -0.5 },
+  screenTitle: { fontSize: 25, fontWeight: '800' as const, letterSpacing: -0.4 },
+  sectionHeading: { fontSize: 15, fontWeight: '700' as const, letterSpacing: 0.3 },
+  body: { fontSize: 14.5, fontWeight: '400' as const, lineHeight: 20 },
+  label: { fontSize: 12, fontWeight: '600' as const, letterSpacing: 0.4 },
 };
 
 export const spacing = {
@@ -39,9 +52,9 @@ export const spacing = {
 } as const;
 
 export const radii = {
-  card: 16,
-  panel: 22,
-  button: 12,
+  card: 18,
+  panel: 24,
+  button: 14,
 };
 
 export const touchTarget = { minWidth: 44, minHeight: 44 };

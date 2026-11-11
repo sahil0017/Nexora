@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/trip.started/v1",
+  "title": "trip.started.v1",
+  "type": "object",
+  "required": ["trip_id", "user_id", "primary_mode"],
+  "properties": {
+    "trip_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "city_id": { "type": "string" },
+    "primary_mode": { "enum": ["walk", "bicycle", "two_wheeler", "car", "bus", "metro", "multimodal"] }
+  }
+}

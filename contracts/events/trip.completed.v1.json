@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/trip.completed/v1",
+  "title": "trip.completed.v1",
+  "type": "object",
+  "required": ["trip_id", "user_id"],
+  "properties": {
+    "trip_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "city_id": { "type": "string" }
+  }
+}

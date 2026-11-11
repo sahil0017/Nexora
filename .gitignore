@@ -1,9 +1,11 @@
 # Go
-backend/api/nexora-api
+platform/api/nexora-api
 *.test
 
-# Node / RN
+# Node / RN / Expo
 node_modules/
+.expo/
+apps/mobile/dist/
 apps/mobile/android/.gradle/
 apps/mobile/ios/Pods/
 
@@ -14,8 +16,12 @@ __pycache__/
 
 # Env & data
 .env
-models/
+/models/
 *.sqlite
+.vscode/
 
 # OS
 .DS_Store
+
+# AWS deploy secrets
+.env.aws
