@@ -11,6 +11,7 @@ import AssistantScreen from '../../features/assistant/screens/AssistantScreen';
 import ProfileScreen from '../../features/profile/screens/ProfileScreen';
 import MobilityNavigator from '../../features/move/MobilityNavigator';
 import ModuleOverviewScreen from '../../features/explore/screens/ModuleOverviewScreen';
+import DeepIntelligenceScreen from '../../features/explore/screens/DeepIntelligenceScreen';
 import FinanceNavigator from '../../features/finance/FinanceNavigator';
 import VoiceNavigator from '../../features/voice/VoiceNavigator';
 import PrivacyPermissionsScreen from '../../features/privacy/screens/PrivacyPermissionsScreen';
@@ -65,6 +66,7 @@ export default function RootNavigator() {
         <Stack.Screen name="Voice" component={VoiceNavigator} />
         <Stack.Screen name="PrivacyPermissions" component={PrivacyPermissionsScreen} />
         <Stack.Screen name="ModuleHub" component={ModuleOverviewScreen} />
+        <Stack.Screen name="DeepIntelligence" component={DeepIntelligenceScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

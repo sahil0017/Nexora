@@ -285,6 +285,18 @@ export default function ProfileScreen() {
 
           <View style={styles.divider} />
 
+          <Tappable onPress={() => nav.navigate('DeepIntelligence')} style={styles.between}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Deep ML Intelligence Engine</Text>
+              <Text style={styles.sub}>
+                16 neural models · ST-GNN, YOLOv8 Vision, N-BEATS Cashflow & User Twin
+              </Text>
+            </View>
+            <StatusPill label="16 ONLINE" tone="success" />
+          </Tappable>
+
+          <View style={styles.divider} />
+
           <Tappable onPress={() => setSettingsOpen(true)} style={styles.between}>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Navigation & Map Display</Text>

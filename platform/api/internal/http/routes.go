@@ -2,7 +2,12 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -66,5 +71,49 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 
 		// Voice Intelligence Platform module
 		voice.Mount(v1, voiceSvc)
+
+		// Deep Learning Intelligence Gateway (proxies all 16 architectures to nexora-ml)
+		mountDeepGateway(v1, cfg.MLServiceURL, logger)
+	})
+}
+
+func mountDeepGateway(r chi.Router, mlBaseURL string, logger *slog.Logger) {
+	trimmed := strings.TrimRight(strings.TrimSpace(mlBaseURL), "/")
+	if trimmed == "" {
+		trimmed = "http://localhost:8000"
+	}
+	targetURL, err := url.Parse(trimmed)
+	if err != nil {
+		logger.Error("invalid MLServiceURL for deep gateway", "url", mlBaseURL, "err", err)
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		// Map /api/v1/deep/* to /v1/deep/*
+		subPath := strings.TrimPrefix(req.URL.Path, "/api/v1")
+		req.URL.Path = subPath
+		req.Host = targetURL.Host
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		logger.Warn("deep ML gateway proxy error", "path", r.URL.Path, "err", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK) // Return 200 with degraded envelope so mobile UI handles offline brain smoothly
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":          "degraded",
+			"brain_reachable": false,
+			"error":           "Deep ML brain unreachable or offline",
+			"path":            r.URL.Path,
+		})
+	}
+
+	r.HandleFunc("/deep", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/api/v1/deep/status"
+		proxy.ServeHTTP(w, r)
+	})
+	r.HandleFunc("/deep/*", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
 	})
 }
