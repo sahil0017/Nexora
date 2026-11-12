@@ -46,16 +46,16 @@ const SOURCE_TYPES = [
 ] as const;
 
 const CAPTURE_MODES = [
-  { key: 'call_dual_track', label: 'Dual-Track Call' },
-  { key: 'background_service_mic', label: 'Android FG Mic' },
-  { key: 'foreground_mic', label: 'iOS Audio Session' },
-  { key: 'meeting_stream', label: 'Meeting Stream' },
+  { key: 'call_dual_track', label: 'Two-Way Phone Call' },
+  { key: 'background_service_mic', label: 'Automatic Call Note' },
+  { key: 'foreground_mic', label: 'Microphone Recording' },
+  { key: 'meeting_stream', label: 'Live Meeting Audio' },
 ] as const;
 
 const CHANNEL_HINTS = [
-  { key: 'local_mic', label: 'Local Mic (You)' },
-  { key: 'remote_track', label: 'Remote Caller' },
-  { key: 'mixed_room', label: 'Mixed Room' },
+  { key: 'local_mic', label: 'Your Voice' },
+  { key: 'remote_track', label: 'Caller Voice' },
+  { key: 'mixed_room', label: 'Room Audio' },
 ] as const;
 
 export default function VoiceOverviewScreen() {
@@ -688,8 +688,8 @@ export default function VoiceOverviewScreen() {
               />
               <View style={styles.pairRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.labelMuted}>Audio Clarity (SNR dB)</Text>
-                  <Input value={snrText} onChangeText={setSnrText} keyboardType="numeric" placeholder="22" />
+                  <Text style={styles.labelMuted}>Audio Clarity Rating</Text>
+                  <Input value={snrText} onChangeText={setSnrText} keyboardType="numeric" placeholder="22 (Clear)" />
                 </View>
                 <View style={{ flex: 1, justifyContent: 'flex-end' }}>
                   <Chip

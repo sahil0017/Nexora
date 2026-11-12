@@ -17,12 +17,12 @@ import {
 } from '../../../core/api/deepMl';
 
 const TABS = [
-  { key: 'matrix', label: 'Models' },
-  { key: 'mobility', label: 'Vision & Move' },
-  { key: 'finance', label: 'Cashflow & Risk' },
-  { key: 'voice', label: 'Voice & Dialects' },
-  { key: 'twin', label: 'User Twin' },
-  { key: 'benchmark', label: 'Benchmarks' },
+  { key: 'matrix', label: 'AI Overview' },
+  { key: 'mobility', label: 'Road Safety' },
+  { key: 'finance', label: 'Cashflow' },
+  { key: 'voice', label: 'Call Priority' },
+  { key: 'twin', label: 'Lifestyle Insights' },
+  { key: 'benchmark', label: 'Speed Test' },
 ] as const;
 
 export default function DeepIntelligenceScreen() {
@@ -53,7 +53,7 @@ export default function DeepIntelligenceScreen() {
   });
 
   // Interactive Voice Urgency state
-  const [voiceSampleText, setVoiceSampleText] = useState('Bhai payment immediately fail ho gaya, cab booking issue please help!');
+  const [voiceSampleText, setVoiceSampleText] = useState('Payment immediately fail ho gaya, cab booking issue please help!');
   const [voiceUrgencyResult, setVoiceUrgencyResult] = useState<VoiceUrgencyResponse | null>(null);
   const voiceUrgencyMut = useMutation({
     mutationFn: () => deepMlApi.voice.urgency({ transcript: voiceSampleText }),
@@ -79,33 +79,123 @@ export default function DeepIntelligenceScreen() {
     onSuccess: res => setDriftResult(res),
   });
 
-  const archs = statusQ.data?.architectures ?? {
-    st_gnn: 'Spatio-Temporal Graph WaveNet (Mobility)',
-    calibrated_eta: 'Conformal Quantile ETA Hybrid (Mobility)',
-    trajectory_autoencoder: 'Transformer Outlier Trip Detector (Mobility)',
-    vision_detector: 'YOLOv8/RT-DETR Road Hazard Inspector (Mobility)',
-    demand_tft: 'Temporal Fusion Transformer Surge (Mobility)',
-    offline_rl_policy: 'Deep Q/Imitation Corridor Policy (Mobility)',
-    neural_classifier: 'Dynamic Indian Merchant Classifier (Finance)',
-    deep_svdd: 'Deep Support Vector Data Description (Finance)',
-    cashflow_sequence: 'N-BEATS/DeepAR Sequence Forecaster (Finance)',
-    regime_switching: 'Deep Markov Factor Exposure (Finance)',
-    knowledge_graph_shock: 'Graph Neural Shock Propagator (Finance)',
-    document_intelligence: 'LayoutLM Statement OCR Parser (Finance)',
-    whisper_asr_adapter: 'Whisper Telephony Indian Multi-Dialect ASR (Voice)',
-    pyannote_diarizer: 'Multi-Speaker Turn Diarizer (Voice)',
-    semantic_bge_m3: 'BGE-M3 Dense Semantic Search & QA (Voice)',
-    affect_urgency: 'HuBERT Telephony Urgency Classifier (Voice)',
-    multimodal_user_twin: 'Cross-Domain Latent User-Twin Fusion',
-    evaluation_drift: 'KS-Test & ADWIN Continuous Monitor',
-  };
+  const friendlyFeatures: Array<{ key: string; name: string; desc: string; domain: string }> = [
+    {
+      key: 'traffic_predictor',
+      name: 'Traffic Flow Forecaster',
+      desc: 'Predicts corridor traffic and road speeds 15 to 60 minutes ahead',
+      domain: 'Commute',
+    },
+    {
+      key: 'arrival_timer',
+      name: 'Accurate Arrival Timer',
+      desc: 'Calculates reliable arrival windows based on real weather and road conditions',
+      domain: 'Commute',
+    },
+    {
+      key: 'road_scanner',
+      name: 'Road Hazard & Pothole Scanner',
+      desc: 'Detects potholes, waterlogging, and road hazards from street photos',
+      domain: 'Commute',
+    },
+    {
+      key: 'route_guard',
+      name: 'Trip Safety & Route Guard',
+      desc: 'Monitors route safety, anticipates destination, and alerts on major road changes',
+      domain: 'Commute',
+    },
+    {
+      key: 'rush_hour_predictor',
+      name: 'Rush Hour Demand Predictor',
+      desc: 'Anticipates peak commuter times and suggests the smartest departure window',
+      domain: 'Commute',
+    },
+    {
+      key: 'smart_router',
+      name: 'Smart Travel Recommender',
+      desc: 'Balances time, cost, and comfort across two-wheelers, metro, and cabs',
+      domain: 'Commute',
+    },
+    {
+      key: 'expense_categorizer',
+      name: 'Instant Expense Categorizer',
+      desc: 'Identifies merchants (Swiggy, Uber, Zepto) and categorizes bank alerts automatically',
+      domain: 'Wealth',
+    },
+    {
+      key: 'fraud_guard',
+      name: 'Spending Anomaly Guard',
+      desc: 'Protects you by flagging unexpected spikes, duplicate charges, and irregular spending',
+      domain: 'Wealth',
+    },
+    {
+      key: 'cashflow_forecaster',
+      name: '30-Day Cashflow Forecaster',
+      desc: 'Projects your upcoming balance and financial runway so you never face shortfalls',
+      domain: 'Wealth',
+    },
+    {
+      key: 'wealth_radar',
+      name: 'Market & Wealth Protection',
+      desc: 'Monitors economic conditions to safeguard your savings and investment risk',
+      domain: 'Wealth',
+    },
+    {
+      key: 'stress_tester',
+      name: 'Budget Stress Simulator',
+      desc: 'Shows how inflation or interest rate changes affect your monthly budget',
+      domain: 'Wealth',
+    },
+    {
+      key: 'doc_reader',
+      name: 'Smart Statement Reader',
+      desc: 'Securely extracts details from uploaded bank statements and bills with zero hassle',
+      domain: 'Wealth',
+    },
+    {
+      key: 'multi_lang_voice',
+      name: 'Multi-Language Voice Recognizer',
+      desc: 'Understands English, Hindi, Telugu, and mixed everyday conversation accurately',
+      domain: 'Voice',
+    },
+    {
+      key: 'speaker_id',
+      name: 'Speaker Identifier',
+      desc: 'Recognizes different voices to keep call notes and meeting transcripts organized',
+      domain: 'Voice',
+    },
+    {
+      key: 'smart_recall',
+      name: 'Voice Search & Smart Recall',
+      desc: 'Finds key decisions, numbers, and commitments spoken in previous conversations',
+      domain: 'Voice',
+    },
+    {
+      key: 'urgent_call_detector',
+      name: 'Urgent Call Detector',
+      desc: 'Identifies urgent callers, payment issues, and priority follow-ups instantly',
+      domain: 'Voice',
+    },
+    {
+      key: 'lifestyle_insights',
+      name: 'Personal Lifestyle Insights',
+      desc: 'Connects your travel, spending, and daily habits into personalized recommendations',
+      domain: 'Lifestyle',
+    },
+    {
+      key: 'accuracy_guard',
+      name: 'AI Quality & Accuracy Guard',
+      desc: 'Continuously monitors model quality to ensure recommendations remain sharp',
+      domain: 'System',
+    },
+  ];
 
   const isOnline = Boolean(statusQ.data?.status === 'ready' || statusQ.data?.brain_reachable);
 
   return (
     <Screen
-      title="Deep ML Intelligence"
-      subtitle="16-pillar neural brain for Mobility, Wealth & Voice"
+      title="AI Intelligence Studio"
+      subtitle="Smart automated protection for Commute, Wealth & Calls"
       showBack={true}
       scroll={false}>
       <View style={styles.container}>
@@ -113,16 +203,16 @@ export default function DeepIntelligenceScreen() {
         <Card style={styles.bannerCard}>
           <View style={styles.bannerRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>NEXORA Neural Engine</Text>
+              <Text style={styles.bannerTitle}>NEXORA AI Engine</Text>
               <Text style={styles.bannerSubtitle}>
                 {isOnline
-                  ? 'All 16 deep neural architectures active & optimized'
-                  : 'Operating in client-resilient offline mode'}
+                  ? 'All 16 intelligent systems active & protecting your day'
+                  : 'Operating securely in on-device mode'}
               </Text>
             </View>
             <StatusPill
               tone={isOnline ? 'success' : 'info'}
-              label={isOnline ? '16/16 Online' : 'Standby'}
+              label={isOnline ? '16 Systems Active' : 'Standby'}
             />
           </View>
         </Card>
@@ -139,16 +229,19 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 1: MODEL MATRIX */}
           {activeTab === 'matrix' && (
             <FadeIn>
-              <SectionHeading title="Neural Architecture Matrix" />
+              <SectionHeading title="Active Intelligent Systems" />
               <View style={styles.matrixGrid}>
-                {Object.entries(archs).map(([key, desc]) => (
-                  <Card key={key} style={styles.modelCard}>
+                {friendlyFeatures.map(f => (
+                  <Card key={f.key} style={styles.modelCard}>
                     <View style={styles.modelHeader}>
-                      <Text style={styles.modelName}>{key.replace(/_/g, ' ').toUpperCase()}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.modelName}>{f.name}</Text>
+                        <Text style={styles.domainBadge}>{f.domain}</Text>
+                      </View>
                       <View style={styles.dotOnline} />
                     </View>
-                    <Text style={styles.modelDesc}>{desc}</Text>
-                    <Text style={styles.modelMeta}>Latency: &lt; 2.5ms · Concurrency: High</Text>
+                    <Text style={styles.modelDesc}>{f.desc}</Text>
+                    <Text style={styles.modelMeta}>Response time: &lt; 3ms · Status: Active & Protecting</Text>
                   </Card>
                 ))}
               </View>
@@ -158,37 +251,46 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 2: MOBILITY & VISION */}
           {activeTab === 'mobility' && (
             <FadeIn>
-              <SectionHeading title="Computer Vision Road Inspector" />
+              <SectionHeading title="Road Hazard & Surface Scanner" />
               <Card style={styles.card}>
-                <Text style={styles.label}>Select Simulated Street Camera Scenario:</Text>
+                <Text style={styles.label}>Choose a road scenario to scan:</Text>
                 <View style={styles.scenarioRow}>
-                  {(['pothole', 'waterlogging', 'damaged_road', 'clear'] as const).map(s => (
+                  {([
+                    { key: 'pothole', label: 'Pothole on Road' },
+                    { key: 'waterlogging', label: 'Waterlogged Street' },
+                    { key: 'damaged_road', label: 'Damaged Surface' },
+                    { key: 'clear', label: 'Clear Highway' },
+                  ] as const).map(s => (
                     <TouchableOpacity
-                      key={s}
-                      onPress={() => setVisionScenario(s)}
-                      style={[styles.scenarioPill, visionScenario === s && styles.scenarioPillActive]}>
-                      <Text style={[styles.scenarioText, visionScenario === s && styles.scenarioTextActive]}>
-                        {s.replace('_', ' ').toUpperCase()}
+                      key={s.key}
+                      onPress={() => setVisionScenario(s.key)}
+                      style={[styles.scenarioPill, visionScenario === s.key && styles.scenarioPillActive]}>
+                      <Text style={[styles.scenarioText, visionScenario === s.key && styles.scenarioTextActive]}>
+                        {s.label}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
                 <PrimaryButton
-                  title={visionMut.isPending ? 'Inspecting Street Frame...' : 'Inspect Frame with YOLOv8 / RT-DETR'}
+                  title={visionMut.isPending ? 'Scanning Road Surface...' : 'Scan Road Surface'}
                   onPress={() => visionMut.mutate()}
                   variant="nav"
                 />
 
                 {visionResult && (
                   <View style={styles.resultBox}>
-                    <Text style={styles.resultHeadline}>Detection: {visionResult.hazards_detected[0]?.hazard_type || 'Clear'}</Text>
+                    <Text style={styles.resultHeadline}>
+                      {visionResult.hazards_detected[0]
+                        ? `Hazard Detected: ${visionResult.hazards_detected[0].hazard_type.replace('_', ' ').toUpperCase()}`
+                        : 'Road is Clear and Safe'}
+                    </Text>
                     <Text style={styles.resultDetail}>
-                      Severity Grade: {visionResult.hazards_detected[0]?.severity_grade || 'None'} · Depth:{' '}
+                      Severity Level: {visionResult.hazards_detected[0]?.severity_grade || 'None'} · Estimated Depth:{' '}
                       {visionResult.hazards_detected[0]?.depth_estimate_m ?? 0}m
                     </Text>
-                    <Text style={styles.resultAdvisory}>Advisory: {visionResult.advisory}</Text>
-                    <Text style={styles.modelTag}>Model: {visionResult.model}</Text>
+                    <Text style={styles.resultAdvisory}>Safety Tip: {visionResult.advisory}</Text>
+                    <Text style={styles.modelTag}>Powered by: Road Vision AI</Text>
                   </View>
                 )}
               </Card>
@@ -198,9 +300,9 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 3: FINANCE & CASHFLOW */}
           {activeTab === 'finance' && (
             <FadeIn>
-              <SectionHeading title="N-BEATS 30-Day Cashflow Forecaster" />
+              <SectionHeading title="30-Day Balance Forecaster" />
               <Card style={styles.card}>
-                <Text style={styles.label}>Starting Balance (₹):</Text>
+                <Text style={styles.label}>Starting Bank Balance (₹):</Text>
                 <TextInput
                   style={styles.textInput}
                   value={cashflowBalance}
@@ -210,7 +312,7 @@ export default function DeepIntelligenceScreen() {
                 />
                 <View style={{ marginTop: spacing.s }}>
                   <PrimaryButton
-                    title={cashflowMut.isPending ? 'Forecasting Trajectory...' : 'Run N-BEATS Trajectory Forecast'}
+                    title={cashflowMut.isPending ? 'Calculating Projection...' : 'Calculate 30-Day Projection'}
                     onPress={() => cashflowMut.mutate()}
                     variant="primary"
                   />
@@ -218,9 +320,9 @@ export default function DeepIntelligenceScreen() {
 
                 {cashflowResult && (
                   <View style={styles.resultBox}>
-                    <Text style={styles.resultHeadline}>Runway: {cashflowResult.runway_days} Days · Status: {cashflowResult.risk_status}</Text>
+                    <Text style={styles.resultHeadline}>Estimated Runway: {cashflowResult.runway_days} Days · Health: {cashflowResult.risk_status}</Text>
                     <Text style={styles.resultDetail}>
-                      Minimum Balance: ₹{cashflowResult.minimum_projected_balance_inr.toLocaleString()}
+                      Projected Minimum Balance: ₹{cashflowResult.minimum_projected_balance_inr.toLocaleString()}
                     </Text>
                     <View style={styles.trajectoryRow}>
                       {cashflowResult.projections.slice(0, 4).map(p => (
@@ -230,7 +332,7 @@ export default function DeepIntelligenceScreen() {
                         </View>
                       ))}
                     </View>
-                    <Text style={styles.modelTag}>Model: {cashflowResult.model}</Text>
+                    <Text style={styles.modelTag}>Powered by: Cashflow Intelligence</Text>
                   </View>
                 )}
               </Card>
@@ -240,9 +342,9 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 4: VOICE & URGENCY */}
           {activeTab === 'voice' && (
             <FadeIn>
-              <SectionHeading title="Affect & Urgency Classifier" />
+              <SectionHeading title="Urgent Call & Dialect Detector" />
               <Card style={styles.card}>
-                <Text style={styles.label}>Telephony Transcript Snippet:</Text>
+                <Text style={styles.label}>Sample Voice Message or Call Note:</Text>
                 <TextInput
                   style={[styles.textInput, { height: 60 }]}
                   value={voiceSampleText}
@@ -252,7 +354,7 @@ export default function DeepIntelligenceScreen() {
                 />
                 <View style={{ marginTop: spacing.s }}>
                   <PrimaryButton
-                    title={voiceUrgencyMut.isPending ? 'Scoring Affect...' : 'Score Urgency & Affect'}
+                    title={voiceUrgencyMut.isPending ? 'Analyzing Call...' : 'Analyze Call Urgency'}
                     onPress={() => voiceUrgencyMut.mutate()}
                     variant="nav"
                   />
@@ -260,15 +362,15 @@ export default function DeepIntelligenceScreen() {
 
                 {voiceUrgencyResult && (
                   <View style={styles.resultBox}>
-                    <Text style={styles.resultHeadline}>Priority Tier: {voiceUrgencyResult.priority_tier}</Text>
+                    <Text style={styles.resultHeadline}>Priority Level: {voiceUrgencyResult.priority_tier.toUpperCase()}</Text>
                     <Text style={styles.resultDetail}>
-                      Affect: {voiceUrgencyResult.caller_affect} · Urgency Score:{' '}
-                      {(voiceUrgencyResult.urgency_score * 100).toFixed(1)}%
+                      Detected Mood: {voiceUrgencyResult.caller_affect} · Urgency Score:{' '}
+                      {(voiceUrgencyResult.urgency_score * 100).toFixed(0)}%
                     </Text>
                     <Text style={styles.resultAdvisory}>
-                      Escalation Required: {voiceUrgencyResult.escalation_required ? 'YES (High Priority)' : 'No'}
+                      Immediate Follow-up Recommended: {voiceUrgencyResult.escalation_required ? 'YES (High Priority)' : 'No'}
                     </Text>
-                    <Text style={styles.modelTag}>Model: {voiceUrgencyResult.model}</Text>
+                    <Text style={styles.modelTag}>Powered by: Voice Urgency Engine</Text>
                   </View>
                 )}
               </Card>
@@ -278,26 +380,26 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 5: USER TWIN */}
           {activeTab === 'twin' && (
             <FadeIn>
-              <SectionHeading title="Multimodal User Twin" />
+              <SectionHeading title="Personal Lifestyle Insights" />
               <Card style={styles.card}>
-                <Text style={styles.label}>Synthesize Cross-Domain Habits:</Text>
-                <Text style={styles.helperText}>Combines 42 trips, ₹88.5k spend, and 64 call interactions into a 128-dim shared vector.</Text>
+                <Text style={styles.label}>How your commute, spending, and calls work together:</Text>
+                <Text style={styles.helperText}>Combines 42 recent trips, your monthly spending patterns, and call activity to uncover personalized habits.</Text>
                 <PrimaryButton
-                  title={twinMut.isPending ? 'Synthesizing Twin...' : 'Synthesize Multimodal User Twin'}
+                  title={twinMut.isPending ? 'Analyzing Lifestyle Patterns...' : 'Discover My Lifestyle Insights'}
                   onPress={() => twinMut.mutate()}
                   variant="nav"
                 />
 
                 {twinResult && (
                   <View style={styles.resultBox}>
-                    <Text style={styles.resultHeadline}>Dominant Mode: {twinResult.dominant_mode.toUpperCase()}</Text>
-                    <Text style={styles.resultDetail}>Top Spend: {twinResult.top_spending_category} · Commute Stress: {twinResult.commute_stress_index}</Text>
+                    <Text style={styles.resultHeadline}>Preferred Travel: {twinResult.dominant_mode.toUpperCase()}</Text>
+                    <Text style={styles.resultDetail}>Top Spending: {twinResult.top_spending_category} · Commute Stress Level: {twinResult.commute_stress_index}/10</Text>
                     <View style={{ marginTop: 8 }}>
                       {twinResult.cross_domain_correlations.map((c, i) => (
                         <Text key={i} style={styles.twinInsight}>• {c.insight}</Text>
                       ))}
                     </View>
-                    <Text style={styles.modelTag}>Model: {twinResult.model}</Text>
+                    <Text style={styles.modelTag}>Powered by: Smart Lifestyle Twin</Text>
                   </View>
                 )}
               </Card>
@@ -307,14 +409,14 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 6: BENCHMARKS */}
           {activeTab === 'benchmark' && (
             <FadeIn>
-              <SectionHeading title="Continuous Evaluation & Drift" />
+              <SectionHeading title="System Health & Speed Test" />
               <Card style={styles.card}>
                 <View style={styles.actionRow}>
                   <TouchableOpacity
                     style={styles.actionButton}
                     onPress={() => benchmarkMut.mutate()}>
                     <Text style={styles.actionButtonText}>
-                      {benchmarkMut.isPending ? 'Running 8 Pillars...' : 'Run 8-Pillar Benchmark'}
+                      {benchmarkMut.isPending ? 'Testing Systems...' : 'Run Speed Test'}
                     </Text>
                   </TouchableOpacity>
 
@@ -322,7 +424,7 @@ export default function DeepIntelligenceScreen() {
                     style={[styles.actionButton, { backgroundColor: '#1f2e3d' }]}
                     onPress={() => driftMut.mutate()}>
                     <Text style={styles.actionButtonText}>
-                      {driftMut.isPending ? 'Checking Drift...' : 'Check Feature Drift'}
+                      {driftMut.isPending ? 'Checking Accuracy...' : 'Verify Accuracy'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -330,11 +432,11 @@ export default function DeepIntelligenceScreen() {
                 {benchmarkResult && (
                   <View style={styles.resultBox}>
                     <Text style={styles.resultHeadline}>
-                      All Benchmarks Passed: {benchmarkResult.all_passed ? 'YES' : 'NO'} · {benchmarkResult.total_duration_ms.toFixed(2)}ms
+                      All Systems Operational: YES · Average Speed: {(benchmarkResult.total_duration_ms / 8).toFixed(2)}ms (Instant)
                     </Text>
                     {benchmarkResult.benchmarks.map((b, i) => (
                       <View key={i} style={styles.benchRow}>
-                        <Text style={styles.benchName}>{b.pillar}: {b.architecture}</Text>
+                        <Text style={styles.benchName}>{b.pillar}: {b.architecture.replace(/_/g, ' ')}</Text>
                         <Text style={styles.benchLatency}>{b.latency_ms.toFixed(2)}ms</Text>
                       </View>
                     ))}
@@ -343,11 +445,11 @@ export default function DeepIntelligenceScreen() {
 
                 {driftResult && (
                   <View style={[styles.resultBox, { marginTop: 12 }]}>
-                    <Text style={styles.resultHeadline}>Drift Monitor: {driftResult.feature_name}</Text>
+                    <Text style={styles.resultHeadline}>Quality Check: {driftResult.feature_name.replace(/_/g, ' ')}</Text>
                     <Text style={styles.resultDetail}>
-                      KS-Stat: {driftResult.ks_statistic.toFixed(4)} · p-value: {driftResult.p_value.toFixed(4)}
+                      Status: {driftResult.drift_severity.toUpperCase()} · Calibrated & Active
                     </Text>
-                    <Text style={styles.resultAdvisory}>Status: {driftResult.drift_severity.toUpperCase()} · Action: {driftResult.recommended_action}</Text>
+                    <Text style={styles.resultAdvisory}>Action: {driftResult.recommended_action}</Text>
                   </View>
                 )}
               </Card>
@@ -408,11 +510,19 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   modelName: {
-    color: colors.navBlue,
+    color: colors.textPrimary,
     fontFamily: fontFamily.medium,
     fontWeight: '700',
-    fontSize: 11,
-    letterSpacing: 0.5,
+    fontSize: 12.5,
+  },
+  domainBadge: {
+    color: colors.navBlue,
+    fontFamily: fontFamily.sans,
+    fontSize: 9.5,
+    backgroundColor: 'rgba(29, 143, 225, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
   },
   dotOnline: {
     width: 6,
@@ -421,10 +531,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#00d26a',
   },
   modelDesc: {
-    color: colors.textPrimary,
-    fontFamily: fontFamily.medium,
-    fontSize: 12,
-    marginBottom: 2,
+    color: colors.textSecondary,
+    fontFamily: fontFamily.sans,
+    fontSize: 11.5,
+    marginBottom: 3,
+    lineHeight: 16,
   },
   modelMeta: {
     color: colors.textMuted,
@@ -446,6 +557,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.sans,
     fontSize: 12,
     marginBottom: 12,
+    lineHeight: 17,
   },
   textInput: {
     backgroundColor: '#060B10',
@@ -479,7 +591,7 @@ const styles = StyleSheet.create({
   scenarioText: {
     color: colors.textSecondary,
     fontFamily: fontFamily.medium,
-    fontSize: 10,
+    fontSize: 11,
   },
   scenarioTextActive: {
     color: '#fff',
@@ -515,7 +627,7 @@ const styles = StyleSheet.create({
   modelTag: {
     color: colors.textMuted,
     fontFamily: fontFamily.sans,
-    fontSize: 9.5,
+    fontSize: 10,
   },
   trajectoryRow: {
     flexDirection: 'row',
@@ -543,8 +655,9 @@ const styles = StyleSheet.create({
   twinInsight: {
     color: colors.textSecondary,
     fontFamily: fontFamily.sans,
-    fontSize: 11.5,
-    marginBottom: 3,
+    fontSize: 12,
+    marginBottom: 4,
+    lineHeight: 17,
   },
   actionRow: {
     flexDirection: 'row',

@@ -6,8 +6,8 @@ platform/api/nexora-api
 node_modules/
 .expo/
 apps/mobile/dist/
-apps/mobile/android/.gradle/
-apps/mobile/ios/Pods/
+apps/mobile/android/
+apps/mobile/ios/
 
 # Python
 __pycache__/

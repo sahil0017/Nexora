@@ -112,17 +112,17 @@ export default function ExploreScreen() {
       <View style={{ marginTop: spacing.m }}>
         {tab === 'modules' && (
           <View style={styles.list}>
-            {/* Deep ML Intelligence Lab Card */}
+            {/* AI Intelligence Studio Card */}
             <FadeIn index={0}>
-              <Tappable onPress={() => nav.navigate('DeepIntelligence')} accessibilityLabel="Open Deep ML Intelligence Lab">
+              <Tappable onPress={() => nav.navigate('DeepIntelligence')} accessibilityLabel="Open AI Intelligence Studio">
                 <Card variant="featured" style={[styles.row, { borderColor: '#1d8fe155', backgroundColor: '#091420' }]}>
                   <View style={[styles.badge, { backgroundColor: '#1d8fe1' }]} />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.moduleTitle}>Deep ML Intelligence Lab</Text>
-                    <Text style={styles.moduleDesc}>16 neural models · ST-GNN, YOLOv8 Vision, N-BEATS Cashflow & User Twin</Text>
+                    <Text style={styles.moduleTitle}>AI Intelligence Studio</Text>
+                    <Text style={styles.moduleDesc}>16 smart features · Road safety, cashflow forecast & voice assistant</Text>
                   </View>
                   <View style={[styles.driveMiniBtn, { backgroundColor: '#1d8fe1' }]}>
-                    <Text style={[styles.driveMiniText, { color: '#ffffff' }]}>Lab ⚡</Text>
+                    <Text style={[styles.driveMiniText, { color: '#ffffff' }]}>Explore AI →</Text>
                   </View>
                 </Card>
               </Tappable>
