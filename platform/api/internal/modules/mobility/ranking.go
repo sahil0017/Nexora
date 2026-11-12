@@ -85,6 +85,7 @@ type ScoredRoute struct {
 	Score                 float64
 	Explanation           []string
 	Geometry              string
+	Steps                 []RouteStep
 }
 
 func defaultWeights(optimizeFor string, custom map[string]float64) map[string]float64 {

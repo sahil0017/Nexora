@@ -334,6 +334,7 @@ func (s *Service) PlanJourney(w http.ResponseWriter, r *http.Request) {
 				AnimalConflictRisk:    corridorSafety.AnimalConflictRisk,
 				SafetyAdvisories:      corridorSafety.Advisories,
 				Geometry:              rt.Geometry,
+				Steps:                 rt.Steps,
 			}
 		}()
 	}
@@ -389,6 +390,7 @@ func (s *Service) PlanJourney(w http.ResponseWriter, r *http.Request) {
 			"safety_advisories":       c.SafetyAdvisories,
 			"explanation":             c.Explanation,
 			"geometry":                c.Geometry,
+			"steps":                   c.Steps,
 		})
 		persisted = append(persisted, PlannedOption{
 			RouteID:          c.RouteID,

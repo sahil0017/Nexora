@@ -145,6 +145,7 @@ function renderProjectedSegments(
 export function NavMapCanvas({
   origin,
   destination,
+  routePath,
   stops = [],
   hazards = [],
   trafficSegments = [],
@@ -178,6 +179,8 @@ export function NavMapCanvas({
 }: {
   origin?: GeoPoint;
   destination?: { name: string; latitude: number; longitude: number } | null;
+  /** Decoded provider route polyline (lat/lng path). Rendered instead of a straight chord when present. */
+  routePath?: GeoPoint[];
   stops?: Array<{ name: string; latitude: number; longitude: number }>;
   hazards?: MapHazardItem[];
   trafficSegments?: MapTrafficItem[];
@@ -394,13 +397,14 @@ export function NavMapCanvas({
     const consider = (pt?: GeoPoint | null) => {
       if (!pt) return;
       const d = haversineDistM(origin, pt);
-      if (d > maxDist && d < 35_000) maxDist = d;
+      if (d > maxDist && d < 60_000) maxDist = d;
     };
     consider(destination);
     stops.forEach(consider);
     tracePoints.forEach(consider);
-    return Math.max(900, Math.min(28_000, Math.round(maxDist * 1.4)));
-  }, [origin, destination, stops, tracePoints]);
+    (routePath ?? []).forEach(consider);
+    return Math.max(900, Math.min(45_000, Math.round(maxDist * 1.25)));
+  }, [origin, destination, stops, tracePoints, routePath]);
 
   const effectiveHeading = useMemo(() => {
     if (typeof liveHeadingDeg === 'number' && !Number.isNaN(liveHeadingDeg)) {
@@ -429,12 +433,21 @@ export function NavMapCanvas({
       };
     };
 
-    const routeWaypoints: GeoPoint[] = [];
-    if (origin && destination) {
-      routeWaypoints.push(origin, ...stops, destination);
-    }
+    // Prefer the real provider polyline; fall back to a straight OD chord through stops.
+    const routeWaypoints: GeoPoint[] =
+      routePath && routePath.length >= 2
+        ? routePath
+        : origin && destination
+        ? [origin, ...stops, destination]
+        : [];
     const routePx = routeWaypoints.map(toPx);
     const destPx = destination && origin ? toPx(destination) : null;
+
+    // Thin dense provider polylines so the segment-renderer stays cheap.
+    const thinnedRoutePx =
+      routePx.length > 160
+        ? routePx.filter((_, i) => i === 0 || i === routePx.length - 1 || i % Math.ceil(routePx.length / 150) === 0)
+        : routePx;
 
     const tracePx = showTrace && origin ? tracePoints.map(toPx) : [];
     if (showTrace && origin && tracePx.length >= 1) {
@@ -524,22 +537,22 @@ export function NavMapCanvas({
             {/* Projected Route Polyline (Origin -> Stops -> Destination) */}
             {destination && (
               <View style={styles.routeOverlay}>
-                {routePx.length >= 2 ? (
+                {thinnedRoutePx.length >= 2 ? (
                   <>
                     {renderProjectedSegments(
-                      routePx,
+                      thinnedRoutePx,
                       prefs.showTraffic && hasCongestion ? colors.statusWarning : colors.routeCyan,
                       6,
                       'route',
                       'rgba(42, 224, 196, 0.25)',
                     )}
-                    {prefs.showTraffic && routePx.length >= 2 && (
+                    {prefs.showTraffic && thinnedRoutePx.length >= 2 && (
                       <View
                         style={[
                           styles.routeCalloutChip,
                           {
-                            left: Math.max(16, Math.min(mapSize.w - 140, (routePx[0].x + routePx[routePx.length - 1].x) / 2 - 48)),
-                            top: Math.max(24, Math.min(mapSize.h - 60, (routePx[0].y + routePx[routePx.length - 1].y) / 2 - 14)),
+                            left: Math.max(16, Math.min(mapSize.w - 140, (thinnedRoutePx[0].x + thinnedRoutePx[thinnedRoutePx.length - 1].x) / 2 - 48)),
+                            top: Math.max(24, Math.min(mapSize.h - 60, (thinnedRoutePx[0].y + thinnedRoutePx[thinnedRoutePx.length - 1].y) / 2 - 14)),
                           },
                         ]}>
                         <Text style={styles.routeCalloutText}>

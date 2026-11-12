@@ -20,6 +20,7 @@ import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/desi
 import { colors, radii, spacing } from '../../../app/theme/tokens';
 import {
   ActiveTrip,
+  GeoPoint,
   MODE_OPTIONS,
   MeaningfulRouteChange,
   OptimizeFor,
@@ -27,8 +28,10 @@ import {
   RouteAlternative,
   RouteContextPayload,
   TripSummary,
+  decodePolyline,
   digitalTwinApi,
   formatDuration,
+  haversineDistM,
   modeLabel,
   moveApi,
   moveDataApi,
@@ -513,7 +516,16 @@ export default function JourneyPlannerScreen() {
     });
   };
 
-  // Build turn-by-turn maneuver sequence & live telemetry for Active Navigation
+  // Build turn-by-turn maneuvers from real provider route steps (falls back to leg-derived steps).
+  const providerSteps = selectedAlt?.steps ?? [];
+  const routeGeometry = React.useMemo(() => {
+    if (selectedAlt?.geometry) {
+      const decoded = decodePolyline(selectedAlt.geometry);
+      if (decoded.length >= 2) return decoded;
+    }
+    return undefined;
+  }, [selectedAlt?.geometry]);
+
   const baseTotalDistanceM =
     tripUpdates.data?.remaining_distance_meters ?? selectedAlt?.distance_meters ?? 6400;
   const baseTotalEtaSec =
@@ -524,67 +536,104 @@ export default function JourneyPlannerScreen() {
   const navSteps = React.useMemo(() => {
     const destName = dest?.name ?? 'Destination';
     const modeTag = modeLabel(activeTrip?.primary_mode ?? selectedAlt?.mode ?? 'car');
-    const waypointSteps = stops.map((s, idx) => ({
-      turnIcon: idx % 2 === 0 ? '↱' : '↰',
-      instruction: `Via Stop ${idx + 1}: ${s.name}`,
-      street: s.subtitle || `${s.name} Connector`,
-      distanceM: Math.round(baseTotalDistanceM * 0.22),
-      lanes: ['↑', '↑', '↱'],
-      activeLaneIndex: 2,
-    }));
 
+    // Primary source: provider-generated turn-by-turn steps (backend synthesizeSteps).
+    if (providerSteps.length > 0) {
+      return providerSteps.map((s, idx) => ({
+        turnIcon: s.turn_icon,
+        instruction: s.instruction,
+        street: s.street || `Step ${idx + 1}`,
+        distanceM: Math.max(30, Math.round(s.distance_meters)),
+        lanes: ['↑', '↑', s.turn_icon === '↱' ? '↱' : s.turn_icon === '↰' ? '↰' : '↑'],
+        activeLaneIndex: s.turn_icon === '↑' ? 0 : 2,
+        location: s.location,
+      }));
+    }
+
+    // Fallback: derive coarse steps from legs (multimodal) or simple 3-step skeleton.
+    const legSteps = (selectedAlt?.legs ?? []).map((leg, idx) => ({
+      turnIcon: idx === 0 ? '↑' : '↱',
+      instruction: leg.label || `${modeLabel(leg.mode)} segment`,
+      street: leg.label || `${modeLabel(leg.mode)} corridor`,
+      distanceM: Math.round(leg.distance_meters),
+      lanes: ['↑', '↑', '↱'],
+      activeLaneIndex: 1,
+      location: undefined as GeoPoint | undefined,
+    }));
+    if (legSteps.length > 0) {
+      return [
+        ...legSteps,
+        {
+          turnIcon: '⚑',
+          instruction: `Arrive at ${destName}`,
+          street: 'Destination ahead',
+          distanceM: 60,
+          lanes: ['↑', '↱'],
+          activeLaneIndex: 1,
+          location: dest ? { latitude: dest.latitude, longitude: dest.longitude } : undefined,
+        },
+      ];
+    }
+
+    // Last resort: generic guidance when no provider data exists at all.
     return [
       {
         turnIcon: '↑',
-        instruction: `Continue on main ${modeTag.toLowerCase()} corridor`,
-        street: `Toward ${stops[0]?.name ?? destName}`,
-        distanceM: Math.max(250, Math.round(baseTotalDistanceM * 0.18)),
-        lanes: ['↑', '↑', '↑', '↱'],
-        activeLaneIndex: 1,
-      },
-      ...waypointSteps,
-      {
-        turnIcon: '↱',
-        instruction: `Keep right onto expressway flyover`,
-        street: `${destName} – Fast Corridor`,
-        distanceM: Math.max(400, Math.round(baseTotalDistanceM * 0.42)),
-        lanes: ['↑', '↑', '↱', '↱'],
-        activeLaneIndex: 2,
-      },
-      {
-        turnIcon: '↰',
-        instruction: `Turn left onto ${destName} approach road`,
-        street: `${destName} Sector Access`,
-        distanceM: Math.max(180, Math.round(baseTotalDistanceM * 0.25)),
-        lanes: ['↰', '↑', '↑'],
+        instruction: `Begin ${modeTag.toLowerCase()} journey toward ${destName}`,
+        street: `Route to ${destName}`,
+        distanceM: Math.max(250, Math.round(baseTotalDistanceM * 0.6)),
+        lanes: ['↑', '↑', '↑'],
         activeLaneIndex: 0,
+        location: undefined as GeoPoint | undefined,
       },
       {
         turnIcon: '⚑',
         instruction: `Arrive at ${destName}`,
-        street: `Destination ahead on right`,
-        distanceM: 60,
+        street: 'Destination ahead',
+        distanceM: Math.max(60, Math.round(baseTotalDistanceM * 0.4)),
         lanes: ['↑', '↱'],
         activeLaneIndex: 1,
+        location: dest ? { latitude: dest.latitude, longitude: dest.longitude } : undefined,
       },
     ];
-  }, [dest?.name, activeTrip?.primary_mode, selectedAlt?.mode, stops, baseTotalDistanceM]);
+  }, [providerSteps, selectedAlt?.legs, selectedAlt?.mode, dest, baseTotalDistanceM]);
+
+  // GPS-driven step advancement: advance when the user has traveled past the current step's trigger
+  // location, or fallen back to cumulative-distance thresholds when step locations are unavailable.
+  const traveledM = loc.tracedDistanceM;
+  React.useEffect(() => {
+    if (!activeTrip || navSteps.length === 0) return;
+    const stepLoc = navSteps[navStepIdx]?.location;
+    if (stepLoc && loc.point) {
+      const distToStep = haversineDistM(loc.point, stepLoc);
+      const stepDist = navSteps[navStepIdx].distanceM;
+      // Advance when within ~35m of the maneuver point, or when we've passed it entirely.
+      if (distToStep < 35 || (traveledM > 50 && distToStep > stepDist + 80)) {
+        if (navStepIdx < navSteps.length - 1) setNavStepIdx(i => i + 1);
+      }
+      return;
+    }
+    // Distance-threshold fallback: cumulative step distances drive progression.
+    let cum = 0;
+    let target = 0;
+    for (let i = 0; i < navSteps.length; i++) {
+      cum += navSteps[i].distanceM;
+      if (traveledM < cum) {
+        target = i;
+        break;
+      }
+      target = navSteps.length - 1;
+    }
+    if (target !== navStepIdx) setNavStepIdx(target);
+  }, [activeTrip, navStepIdx, navSteps, loc.point, traveledM]);
 
   const clampedStepIdx = Math.min(navStepIdx, Math.max(0, navSteps.length - 1));
   const currentStep = navSteps[clampedStepIdx];
   const nextStep = navSteps[clampedStepIdx + 1];
-  const navProgress = navSteps.length > 1 ? clampedStepIdx / (navSteps.length - 1) : 0;
+  const navProgress =
+    baseTotalDistanceM > 0 ? Math.min(1, Math.max(0, traveledM / baseTotalDistanceM)) : 0;
 
-  // Auto-advance simulated turn-by-turn progress every 9s when autoDrive is enabled
-  React.useEffect(() => {
-    if (!activeTrip || !autoDrive) return;
-    const timer = setInterval(() => {
-      setNavStepIdx(prev => (prev < navSteps.length - 1 ? prev + 1 : 0));
-    }, 9000);
-    return () => clearInterval(timer);
-  }, [activeTrip, autoDrive, navSteps.length]);
-
-  const remainingFactor = Math.max(0.06, 1 - navProgress * 0.88);
+  const remainingFactor = Math.max(0.06, 1 - navProgress * 0.94);
   const activeDistanceM = Math.round(baseTotalDistanceM * remainingFactor);
   const liveEtaSec = Math.max(60, Math.round(baseTotalEtaSec * remainingFactor));
   const etaBufferMin = Math.max(1, Math.round(((p90TotalEtaSec - baseTotalEtaSec) * remainingFactor) / 60));
@@ -714,6 +763,7 @@ export default function JourneyPlannerScreen() {
           origin={loc.point}
           stops={stops}
           destination={dest}
+          routePath={routeGeometry}
           hazards={hazards.data?.hazards ?? []}
           trafficSegments={traffic.data?.segments ?? []}
           tracePoints={loc.tracePoints}
