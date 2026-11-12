@@ -28,6 +28,7 @@ from nexora.models.event_intelligence import EventIntelligenceEngine
 from nexora.models.privacy_intelligence import PrivacyPreservingCrowdAggregator
 from nexora.models.traffic_forecaster import SpatioTemporalTrafficForecaster
 from nexora.vision.road_inspector import RoadVisionInspector
+from nexora.voice.engine import VoiceIntelligenceNetwork
 
 traffic_model = SpatioTemporalTrafficForecaster()
 demand_model = MobilityDemandForecaster()
@@ -39,6 +40,7 @@ eta_model = JourneyETAEngine(traffic_model)
 vision_model = RoadVisionInspector()
 assistant_model = MobilityAIAssistant()
 finance_network = FinanceIntelligenceNetwork()
+voice_network = VoiceIntelligenceNetwork()
 online_state = OnlineIntelligenceState(traffic=traffic_model, demand=demand_model)
 
 # Event-versioned 30s TTL cache for high-frequency spatial/traffic inference
@@ -555,6 +557,7 @@ def events_status() -> dict[str, Any]:
         "active_hazards_count": len(online_state.active_hazards),
         "active_hotspots_count": len(online_state.current_hotspots()),
         "finance_events_count": len(online_state.finance_events),
+        "voice_events_count": len(online_state.voice_events),
     }
 
 
@@ -615,3 +618,64 @@ def finance_radar_scan(body: dict[str, Any]) -> dict[str, Any]:
 def finance_cfo_reason(body: dict[str, Any]) -> dict[str, Any]:
     """Domain 15, §17.3 & §17.6: Multi-Agent AI CFO reasoning with Privacy Firewall & Evidence Bundle."""
     return finance_network.reason_ai_cfo(body)
+
+
+# =============================================================================
+# NEXORA VOICE INTELLIGENCE PLATFORM ENDPOINTS (/v1/voice/*)
+# =============================================================================
+
+
+@app.post("/v1/voice/audio/analyze")
+def voice_audio_analyze(body: dict[str, Any]) -> dict[str, Any]:
+    """Workstream 2: Audio validation, VAD, SNR/clipping QC, and CHiME-style routing strategy."""
+    return voice_network.analyze_audio(body)
+
+
+@app.post("/v1/voice/conversation/process")
+def voice_conversation_process(body: dict[str, Any]) -> dict[str, Any]:
+    """Full 10-workstream Voice Intelligence pipeline producing canonical Conversation IR."""
+    return voice_network.process_conversation(body)
+
+
+@app.post("/v1/voice/memory/search")
+def voice_memory_search(body: dict[str, Any]) -> dict[str, Any]:
+    """Workstream 6: Hybrid lexical + semantic search across conversational memory."""
+    query = str(body.get("query") or "")
+    convs = body.get("conversations") if isinstance(body.get("conversations"), list) else None
+    limit = int(body.get("limit") or 8)
+    return voice_network.search_memory(query=query, conversations=convs, limit=limit)
+
+
+@app.post("/v1/voice/qa")
+def voice_qa(body: dict[str, Any]) -> dict[str, Any]:
+    """Workstream 8: Source-grounded conversational Q&A with utterance timestamp citations."""
+    question = str(body.get("question") or body.get("query") or "")
+    convs = body.get("conversations") if isinstance(body.get("conversations"), list) else None
+    return voice_network.answer_qa(question=question, conversations=convs)
+
+
+@app.get("/v1/voice/models/benchmarks")
+def voice_models_benchmarks() -> dict[str, Any]:
+    """Workstream 10: Model Intelligence adapter registry and benchmark telemetry."""
+    return voice_network.model_benchmarks()
+
+
+@app.post("/v1/voice/sessions/start")
+def voice_session_start(body: dict[str, Any]) -> dict[str, Any]:
+    """Workstream 1: Start a live/background call or meeting streaming capture session."""
+    return voice_network.start_session(body)
+
+
+@app.post("/v1/voice/sessions/{session_id}/chunk")
+def voice_session_chunk(session_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Workstream 1-5: Stream rolling audio/speech chunk and update Conversation IR & who->whom graph."""
+    return voice_network.ingest_session_chunk(session_id, body)
+
+
+@app.post("/v1/voice/sessions/{session_id}/finalize")
+def voice_session_finalize(session_id: str) -> dict[str, Any]:
+    """Finalize streaming call session into a sealed Conversation IR."""
+    res = voice_network.finalize_session(session_id)
+    if res is None:
+        raise HTTPException(status_code=404, detail="voice session not found")
+    return res

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/voice.conversation.understood/v1",
+  "title": "voice.conversation.understood.v1",
+  "type": "object",
+  "required": ["conversation_id", "user_id", "event_count", "finding_count"],
+  "properties": {
+    "conversation_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "topics": { "type": "array", "items": { "type": "string" } },
+    "event_count": { "type": "integer", "minimum": 0 },
+    "finding_count": { "type": "integer", "minimum": 0 },
+    "entity_count": { "type": "integer", "minimum": 0 }
+  }
+}

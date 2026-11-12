@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/voice.action.suggested/v1",
+  "title": "voice.action.suggested.v1",
+  "type": "object",
+  "required": ["action_id", "conversation_id", "user_id", "action_type", "status"],
+  "properties": {
+    "action_id": { "type": "string", "format": "uuid" },
+    "conversation_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "action_type": { "enum": ["note", "reminder", "task", "calendar_event", "follow_up"] },
+    "status": { "enum": ["suggested", "approved", "rejected", "executed"] }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/voice.audio.analyzed/v1",
+  "title": "voice.audio.analyzed.v1",
+  "type": "object",
+  "required": ["conversation_id", "recording_id", "quality_score", "routing_strategy"],
+  "properties": {
+    "conversation_id": { "type": "string", "format": "uuid" },
+    "recording_id": { "type": "string", "format": "uuid" },
+    "quality_score": { "type": "number", "minimum": 0, "maximum": 100 },
+    "snr_db": { "type": "number" },
+    "speech_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "routing_strategy": { "enum": ["direct_asr", "denoise_then_asr", "overlap_aware_diarize", "low_snr_fallback"] }
+  }
+}

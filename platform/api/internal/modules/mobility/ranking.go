@@ -55,27 +55,27 @@ type ObjectiveScores struct {
 
 // ScoredRoute holds a ranked journey alternative with explanations and shadow ML metadata.
 type ScoredRoute struct {
-	RouteID              string
-	Provider             string
-	Mode                 string
-	Modes                []string
-	Legs                 []RouteLeg
-	DistanceMeters       float64
-	P50Seconds           int
-	P80Seconds           int
-	P90Seconds           int
-	ShadowP50Seconds     int
-	ShadowP90Seconds     int
-	ShadowModelVer       string
-	ModelVersion         string
-	ReliabilityScore     float64
-	ReliabilityBreakdown ReliabilityBreakdown
-	ConfidenceInterval   ConfidenceInterval
-	ObjectiveScores      ObjectiveScores
-	EstimatedCostINR     float64
-	CO2Grams             int
-	WalkMinutes          float64
-	Transfers            int
+	RouteID               string
+	Provider              string
+	Mode                  string
+	Modes                 []string
+	Legs                  []RouteLeg
+	DistanceMeters        float64
+	P50Seconds            int
+	P80Seconds            int
+	P90Seconds            int
+	ShadowP50Seconds      int
+	ShadowP90Seconds      int
+	ShadowModelVer        string
+	ModelVersion          string
+	ReliabilityScore      float64
+	ReliabilityBreakdown  ReliabilityBreakdown
+	ConfidenceInterval    ConfidenceInterval
+	ObjectiveScores       ObjectiveScores
+	EstimatedCostINR      float64
+	CO2Grams              int
+	WalkMinutes           float64
+	Transfers             int
 	HazardsCount          int
 	HazardPenaltySeconds  int
 	EventImpactSummary    string

@@ -56,6 +56,7 @@ export const moduleColors = {
   finance: '#A3E635',
   work: '#38BDF8',
   assistant: '#10B981',
+  voice: '#A78BFA',
 } as const;
 
 export const typography = {

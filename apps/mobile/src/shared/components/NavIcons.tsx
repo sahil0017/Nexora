@@ -14,7 +14,12 @@ export type NavIconName =
   | 'FinLedger'
   | 'FinWealth'
   | 'FinLab'
-  | 'FinCFO';
+  | 'FinCFO'
+  | 'VoiceCapture'
+  | 'VoiceTranscript'
+  | 'VoiceMemory'
+  | 'VoiceActions'
+  | 'VoiceEvidence';
 
 /**
  * Pure React Native geometric navigation icons — zero external font or Unicode glyph dependencies,
@@ -278,6 +283,79 @@ export function NavIcon({ name, color }: { name: NavIconName; color: string }) {
               justifyContent: 'center',
             }}>
             <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: color }} />
+          </View>
+        </View>
+      );
+
+    case 'VoiceCapture':
+      return (
+        <View style={[styles.box, { flexDirection: 'row', alignItems: 'center', gap: 2.5 }]}>
+          <View style={{ width: 3, height: 8, borderRadius: 1.5, backgroundColor: color }} />
+          <View style={{ width: 3, height: 15, borderRadius: 1.5, backgroundColor: color }} />
+          <View style={{ width: 3, height: 10, borderRadius: 1.5, backgroundColor: color }} />
+          <View style={{ width: 3, height: 13, borderRadius: 1.5, backgroundColor: color }} />
+        </View>
+      );
+
+    case 'VoiceTranscript':
+      return (
+        <View style={[styles.box, { justifyContent: 'space-evenly', paddingVertical: 2 }]}>
+          <View style={{ width: 16, height: 2.5, borderRadius: 2, backgroundColor: color }} />
+          <View style={{ width: 13, height: 2.5, borderRadius: 2, backgroundColor: color, alignSelf: 'flex-start', marginLeft: 3 }} />
+          <View style={{ width: 15, height: 2.5, borderRadius: 2, backgroundColor: color }} />
+        </View>
+      );
+
+    case 'VoiceMemory':
+      return (
+        <View style={styles.box}>
+          <View
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: 8,
+              borderWidth: 2,
+              borderColor: color,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
+          </View>
+        </View>
+      );
+
+    case 'VoiceActions':
+      return (
+        <View style={styles.box}>
+          <View
+            style={{
+              width: 15,
+              height: 15,
+              borderRadius: 4,
+              borderWidth: 2,
+              borderColor: color,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <View style={{ width: 7, height: 2.5, borderRadius: 1.5, backgroundColor: color }} />
+          </View>
+        </View>
+      );
+
+    case 'VoiceEvidence':
+      return (
+        <View style={styles.box}>
+          <View
+            style={{
+              width: 14,
+              height: 16,
+              borderRadius: 4,
+              borderWidth: 2,
+              borderColor: color,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <View style={{ width: 5, height: 5, borderRadius: 1, backgroundColor: color }} />
           </View>
         </View>
       );

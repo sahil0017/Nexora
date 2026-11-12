@@ -45,7 +45,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	displayName := "Sahil Kanungo"
 	locale := "en-IN"
 	timezone := "Asia/Kolkata"
-	modules := []string{"move", "health", "finance", "work"}
+	modules := []string{"move", "health", "finance", "work", "voice"}
 
 	if h != nil && h.pg != nil {
 		_ = h.pg.QueryRow(r.Context(),

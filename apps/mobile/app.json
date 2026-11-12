@@ -11,7 +11,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "ai.nexora.movesmart",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "NEXORA uses your location to plan multimodal routes, find nearby transit stops, and warn about road hazards."
+        "NSLocationWhenInUseUsageDescription": "NEXORA uses your location to plan multimodal routes, find nearby transit stops, and warn about road hazards.",
+        "NSMicrophoneUsageDescription": "NEXORA records meetings and calls with your explicit consent for transcript, commitment, and evidence sealing.",
+        "NSContactsUsageDescription": "NEXORA matches incoming caller handles against your contacts locally to identify callers without paid third-party SDKs."
       }
     },
     "android": {
@@ -20,7 +22,11 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.READ_CALL_LOG",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.READ_CONTACTS",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/voice.evidence.sealed/v1",
+  "title": "voice.evidence.sealed.v1",
+  "type": "object",
+  "required": ["evidence_id", "conversation_id", "recording_id", "chain_hash"],
+  "properties": {
+    "evidence_id": { "type": "string", "format": "uuid" },
+    "conversation_id": { "type": "string", "format": "uuid" },
+    "recording_id": { "type": "string", "format": "uuid" },
+    "chain_hash": { "type": "string" },
+    "legal_hold": { "type": "boolean" }
+  }
+}

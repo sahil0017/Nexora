@@ -768,18 +768,18 @@ func fallbackParseAlert(req AlertIngestRequest) map[string]any {
 		cur = "INR"
 	}
 	return map[string]any{
-		"external_txn_id":       "alt_" + hex.EncodeToString(sum[:10]),
-		"source_channel":        src,
-		"txn_type":              txnType,
-		"channel":               channel,
-		"amount":                amt,
-		"currency":              cur,
-		"balance_after_txn":     bal,
-		"merchant":              "Alert Merchant",
-		"category":              "General",
-		"upi_vpa_masked":        vpa,
-		"is_internal_transfer":  isInternal,
-		"is_discretionary":      txnType == "debit",
+		"external_txn_id":        "alt_" + hex.EncodeToString(sum[:10]),
+		"source_channel":         src,
+		"txn_type":               txnType,
+		"channel":                channel,
+		"amount":                 amt,
+		"currency":               cur,
+		"balance_after_txn":      bal,
+		"merchant":               "Alert Merchant",
+		"category":               "General",
+		"upi_vpa_masked":         vpa,
+		"is_internal_transfer":   isInternal,
+		"is_discretionary":       txnType == "debit",
 		"is_recurring_candidate": false,
 	}
 }

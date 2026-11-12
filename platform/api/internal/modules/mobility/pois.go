@@ -46,8 +46,8 @@ var (
 )
 
 type overpassElement struct {
-	Type   string `json:"type"`
-	ID     int64  `json:"id"`
+	Type   string  `json:"type"`
+	ID     int64   `json:"id"`
 	Lat    float64 `json:"lat"`
 	Lon    float64 `json:"lon"`
 	Center *struct {

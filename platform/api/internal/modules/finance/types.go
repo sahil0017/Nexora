@@ -20,24 +20,24 @@ type Account struct {
 
 // Transaction represents a normalized financial ledger entry.
 type Transaction struct {
-	ID                  string    `json:"id"`
-	UserID              string    `json:"user_id"`
-	AccountID           string    `json:"account_id"`
-	ExternalTxnID       string    `json:"external_txn_id,omitempty"`
-	TxnDate             string    `json:"txn_date"`
-	TxnType             string    `json:"txn_type"`
-	Channel             string    `json:"channel"`
-	SourceChannel       string    `json:"source_channel"`
-	Amount              float64   `json:"amount"`
-	Currency            string    `json:"currency"`
-	BalanceAfterTxn     *float64  `json:"balance_after_txn,omitempty"`
-	Merchant            string    `json:"merchant,omitempty"`
-	Category            string    `json:"category,omitempty"`
-	UPIVPAMasked        string    `json:"upi_vpa_masked,omitempty"`
-	IsInternalTransfer  bool      `json:"is_internal_transfer"`
-	IsDiscretionary     bool      `json:"is_discretionary"`
-	IsRecurringCandidate bool     `json:"is_recurring_candidate"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	UserID               string    `json:"user_id"`
+	AccountID            string    `json:"account_id"`
+	ExternalTxnID        string    `json:"external_txn_id,omitempty"`
+	TxnDate              string    `json:"txn_date"`
+	TxnType              string    `json:"txn_type"`
+	Channel              string    `json:"channel"`
+	SourceChannel        string    `json:"source_channel"`
+	Amount               float64   `json:"amount"`
+	Currency             string    `json:"currency"`
+	BalanceAfterTxn      *float64  `json:"balance_after_txn,omitempty"`
+	Merchant             string    `json:"merchant,omitempty"`
+	Category             string    `json:"category,omitempty"`
+	UPIVPAMasked         string    `json:"upi_vpa_masked,omitempty"`
+	IsInternalTransfer   bool      `json:"is_internal_transfer"`
+	IsDiscretionary      bool      `json:"is_discretionary"`
+	IsRecurringCandidate bool      `json:"is_recurring_candidate"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // IngestionChannel tracks Zero-AA real-time sources (Vault Email, Notification, Shortcut, Broker OAuth).

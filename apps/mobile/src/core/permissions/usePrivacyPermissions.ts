@@ -1,6 +1,7 @@
-import { Platform } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { create } from 'zustand';
 import * as Location from 'expo-location';
+import { requestAndroidScreeningRole } from '../native/callerIdBridge';
 
 export type PermissionKey =
   | 'gpsLocation'
@@ -8,11 +9,15 @@ export type PermissionKey =
   | 'emailVaultForwarding'
   | 'clipboardAutoScan'
   | 'aiCfoTelemetry'
-  | 'edgePiiMasking';
+  | 'edgePiiMasking'
+  | 'voiceMicCapture'
+  | 'voiceConversationMemory'
+  | 'deviceCallLogsRead'
+  | 'deviceCallScreening';
 
 export type PermissionDescriptor = {
   key: PermissionKey;
-  domain: 'Mobility' | 'Finance' | 'Copilot' | 'Security';
+  domain: 'Mobility' | 'Finance' | 'Copilot' | 'Security' | 'Voice';
   title: string;
   description: string;
   dataHandled: string;
@@ -68,6 +73,40 @@ export const PERMISSION_CATALOG: PermissionDescriptor[] = [
     dataHandled: 'Processed locally before syncing.',
     recommended: true,
   },
+  {
+    key: 'voiceMicCapture',
+    domain: 'Voice',
+    title: 'Voice Capture & Recording Import',
+    description: 'Allows capturing meetings, calls, or imported audio recordings into encrypted Voice Intelligence storage.',
+    dataHandled: 'Original audio sealed with SHA-256 & HMAC; explicit consent required per capture.',
+    recommended: true,
+  },
+  {
+    key: 'voiceConversationMemory',
+    domain: 'Voice',
+    title: 'Conversational Knowledge & Memory Graph',
+    description: 'Extracts commitments, entities, and cross-conversation memory with source-grounded citations.',
+    dataHandled: 'PII scrubbed before model inference; human corrections logged immutably.',
+    recommended: true,
+  },
+  {
+    key: 'deviceCallLogsRead',
+    domain: 'Voice',
+    title: 'Device Historic Call Logs',
+    description:
+      'Reads your device call history (number, contact name, direction, duration & timestamp) strictly when you tap Sync Device CallLog.',
+    dataHandled: 'Phone numbers are SHA-256 hashed and masked; raw numbers are never stored in plain text.',
+    recommended: false,
+  },
+  {
+    key: 'deviceCallScreening',
+    domain: 'Voice',
+    title: 'Live Caller ID & Call Screening',
+    description:
+      'Allows Android CallScreeningService and iOS Call Directory Extension to identify callers and warn on spam.',
+    dataHandled: 'Uses your local Caller Intelligence DB first (₹0 cost); unknown numbers prompt post-call.',
+    recommended: true,
+  },
 ];
 
 export type PermissionMap = Record<PermissionKey, boolean>;
@@ -79,12 +118,16 @@ interface PrivacyPermissionsState {
   consentConfigured: boolean;
   lastUpdatedAt: string | null;
   osLocationStatus: OsLocationStatus;
+  osCallLogStatus: OsLocationStatus;
+  osCallScreeningStatus: OsLocationStatus;
   setPermission: (key: PermissionKey, value: boolean) => void;
   applyRecommended: () => void;
   revokeOptional: () => void;
   markReviewed: () => void;
   syncOsPermissions: () => Promise<OsLocationStatus>;
   requestOsLocation: () => Promise<OsLocationStatus>;
+  requestOsCallLogs: () => Promise<OsLocationStatus>;
+  requestOsCallScreening: () => Promise<OsLocationStatus>;
 }
 
 const STORAGE_KEY = 'nexora_privacy_permissions_v1';
@@ -96,6 +139,10 @@ const DEFAULT_PERMISSIONS: PermissionMap = {
   clipboardAutoScan: false,
   aiCfoTelemetry: false,
   edgePiiMasking: true,
+  voiceMicCapture: false,
+  voiceConversationMemory: false,
+  deviceCallLogsRead: false,
+  deviceCallScreening: false,
 };
 
 function loadPersisted(): {
@@ -146,6 +193,8 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
   consentConfigured: initial.consentConfigured,
   lastUpdatedAt: initial.lastUpdatedAt,
   osLocationStatus: 'unknown',
+  osCallLogStatus: 'unknown',
+  osCallScreeningStatus: 'unknown',
 
   setPermission: (key, value) => {
     const next = { ...get().permissions, [key]: value };
@@ -163,6 +212,10 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
       clipboardAutoScan: false,
       aiCfoTelemetry: true,
       edgePiiMasking: true,
+      voiceMicCapture: true,
+      voiceConversationMemory: true,
+      deviceCallLogsRead: false,
+      deviceCallScreening: true,
     };
     const now = new Date().toISOString();
     const payload = { permissions: next, consentConfigured: true, lastUpdatedAt: now };
@@ -178,6 +231,10 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
       clipboardAutoScan: false,
       aiCfoTelemetry: false,
       edgePiiMasking: true,
+      voiceMicCapture: false,
+      voiceConversationMemory: false,
+      deviceCallLogsRead: false,
+      deviceCallScreening: false,
     };
     const now = new Date().toISOString();
     const payload = { permissions: next, consentConfigured: true, lastUpdatedAt: now };
@@ -212,7 +269,17 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
       const { status } = await Location.getForegroundPermissionsAsync();
       const mapped: OsLocationStatus =
         status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
-      set({ osLocationStatus: mapped });
+      if (Platform.OS === 'android') {
+        const hasCallLog = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_CALL_LOG);
+        const hasPhoneState = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE);
+        set({
+          osLocationStatus: mapped,
+          osCallLogStatus: hasCallLog ? 'granted' : 'undetermined',
+          osCallScreeningStatus: hasPhoneState ? 'granted' : 'undetermined',
+        });
+      } else {
+        set({ osLocationStatus: mapped });
+      }
       return mapped;
     } catch {
       return get().osLocationStatus;
@@ -248,6 +315,51 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
       }
       return mapped;
     } catch {
+      return 'denied';
+    }
+  },
+
+  requestOsCallLogs: async () => {
+    try {
+      if (Platform.OS === 'android') {
+        const res = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.READ_CALL_LOG,
+          PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+        ]);
+        const granted = res[PermissionsAndroid.PERMISSIONS.READ_CALL_LOG] === PermissionsAndroid.RESULTS.GRANTED;
+        const status: OsLocationStatus = granted ? 'granted' : 'denied';
+        set({ osCallLogStatus: status });
+        get().setPermission('deviceCallLogsRead', granted);
+        return status;
+      }
+      // On iOS / Web, app-level consent enables CSV/JSON call log import
+      set({ osCallLogStatus: 'granted' });
+      get().setPermission('deviceCallLogsRead', true);
+      return 'granted';
+    } catch {
+      set({ osCallLogStatus: 'denied' });
+      get().setPermission('deviceCallLogsRead', false);
+      return 'denied';
+    }
+  },
+
+  requestOsCallScreening: async () => {
+    try {
+      if (Platform.OS === 'android') {
+        const phoneRes = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE);
+        const roleRes = await requestAndroidScreeningRole();
+        const granted = phoneRes === PermissionsAndroid.RESULTS.GRANTED || roleRes.granted;
+        const status: OsLocationStatus = granted ? 'granted' : 'undetermined';
+        set({ osCallScreeningStatus: status });
+        get().setPermission('deviceCallScreening', granted);
+        return status;
+      }
+      set({ osCallScreeningStatus: 'granted' });
+      get().setPermission('deviceCallScreening', true);
+      return 'granted';
+    } catch {
+      set({ osCallScreeningStatus: 'denied' });
+      get().setPermission('deviceCallScreening', false);
       return 'denied';
     }
   },

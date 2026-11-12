@@ -11,6 +11,7 @@ import (
 	"github.com/nexora/platform/api/internal/handlers"
 	"github.com/nexora/platform/api/internal/modules/finance"
 	"github.com/nexora/platform/api/internal/modules/mobility"
+	"github.com/nexora/platform/api/internal/modules/voice"
 	"github.com/nexora/platform/api/internal/platform/cache"
 	"github.com/nexora/platform/api/internal/platform/identity"
 	"github.com/nexora/platform/api/internal/storage"
@@ -24,14 +25,18 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 
 	var mobRepo mobility.Repository
 	var finRepo finance.Repository
+	var voiceRepo voice.Repository
 	if pg != nil {
 		mobRepo = mobility.NewPostgresRepository(pg)
 		finRepo = finance.NewPostgresRepository(pg)
+		voiceRepo = voice.NewPostgresRepository(pg)
 	}
 	sharedCache := cache.New(cfg.RedisURL)
 	mobSvc := mobility.NewService(mobRepo, mobility.HeuristicRoutingProvider{}, mobility.NewMLClient(cfg.MLServiceURL), logger).
 		WithCache(sharedCache)
 	finSvc := finance.NewService(finRepo, finance.NewMLClient(cfg.MLServiceURL), finance.NewEnvelopeVault(cfg.FinanceMasterKey), logger).
+		WithCache(sharedCache)
+	voiceSvc := voice.NewService(voiceRepo, voice.NewMLClient(cfg.MLServiceURL), voice.NewVoiceVault(cfg.FinanceMasterKey), logger).
 		WithCache(sharedCache)
 
 	r.Route("/api/v1", func(v1 chi.Router) {
@@ -58,5 +63,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 
 		// Finance Intelligence Network module
 		finance.Mount(v1, finSvc)
+
+		// Voice Intelligence Platform module
+		voice.Mount(v1, voiceSvc)
 	})
 }

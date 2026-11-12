@@ -18,6 +18,7 @@ const DOMAIN_COLOR: Record<string, string> = {
   Finance: moduleColors.finance,
   Copilot: colors.routeCyan,
   Security: colors.accentBright,
+  Voice: moduleColors.voice,
 };
 
 export default function PrivacyPermissionsScreen() {
@@ -30,12 +31,16 @@ export default function PrivacyPermissionsScreen() {
     consentConfigured,
     lastUpdatedAt,
     osLocationStatus,
+    osCallLogStatus,
+    osCallScreeningStatus,
     setPermission,
     applyRecommended,
     revokeOptional,
     markReviewed,
     syncOsPermissions,
     requestOsLocation,
+    requestOsCallLogs,
+    requestOsCallScreening,
   } = usePrivacyPermissions();
 
   useEffect(() => {
@@ -48,6 +53,14 @@ export default function PrivacyPermissionsScreen() {
   const handleToggle = (key: PermissionKey, nextVal: boolean) => {
     if (key === 'gpsLocation' && nextVal) {
       void requestOsLocation();
+      return;
+    }
+    if (key === 'deviceCallLogsRead' && nextVal) {
+      void requestOsCallLogs();
+      return;
+    }
+    if (key === 'deviceCallScreening' && nextVal) {
+      void requestOsCallScreening();
       return;
     }
     setPermission(key, nextVal);
@@ -158,6 +171,22 @@ export default function PrivacyPermissionsScreen() {
                         OS Permission:{' '}
                         <Text style={{ color: osLocationStatus === 'granted' ? colors.accentBright : colors.statusWarning }}>
                           {osLocationStatus.toUpperCase()}
+                        </Text>
+                      </Text>
+                    ) : null}
+                    {item.key === 'deviceCallLogsRead' ? (
+                      <Text style={styles.osStatus}>
+                        OS CallLog / Contacts:{' '}
+                        <Text style={{ color: osCallLogStatus === 'granted' ? colors.accentBright : colors.statusWarning }}>
+                          {osCallLogStatus.toUpperCase()}
+                        </Text>
+                      </Text>
+                    ) : null}
+                    {item.key === 'deviceCallScreening' ? (
+                      <Text style={styles.osStatus}>
+                        OS Phone State & Screening:{' '}
+                        <Text style={{ color: osCallScreeningStatus === 'granted' ? colors.accentBright : colors.statusWarning }}>
+                          {osCallScreeningStatus.toUpperCase()}
                         </Text>
                       </Text>
                     ) : null}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nexora/voice.speech.transcribed/v1",
+  "title": "voice.speech.transcribed.v1",
+  "type": "object",
+  "required": ["conversation_id", "recording_id", "utterance_count", "speaker_count", "languages"],
+  "properties": {
+    "conversation_id": { "type": "string", "format": "uuid" },
+    "recording_id": { "type": "string", "format": "uuid" },
+    "utterance_count": { "type": "integer", "minimum": 0 },
+    "speaker_count": { "type": "integer", "minimum": 0 },
+    "languages": { "type": "array", "items": { "type": "string" } },
+    "mean_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

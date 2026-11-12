@@ -34,6 +34,7 @@ class OnlineIntelligenceState:
         self.gps_buffer: deque[dict[str, Any]] = deque(maxlen=1000)
         self.active_hazards: deque[dict[str, Any]] = deque(maxlen=200)
         self.finance_events: deque[dict[str, Any]] = deque(maxlen=500)
+        self.voice_events: deque[dict[str, Any]] = deque(maxlen=500)
         self.processed_event_ids: deque[str] = deque(maxlen=2000)
         self.events_processed: int = 0
         self.sqs_polls: int = 0
@@ -120,6 +121,9 @@ class OnlineIntelligenceState:
 
         elif etype.startswith("finance."):
             self.finance_events.append({"event_type": etype, "payload": payload})
+
+        elif etype.startswith("voice."):
+            self.voice_events.append({"event_type": etype, "payload": payload})
 
         self.events_processed += 1
         self.last_event_at = datetime.now(timezone.utc).isoformat()

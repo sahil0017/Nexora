@@ -1,0 +1,195 @@
+openapi: 3.1.0
+info:
+  title: NEXORA Voice Intelligence API
+  version: 1.0.0
+  description: >
+    OpenAPI contract for the NEXORA Complete Voice Intelligence Platform
+    covering all 10 workstreams and the canonical Conversation IR backbone.
+servers:
+  - url: /api/v1
+paths:
+  /voice/overview:
+    get:
+      summary: Voice Intelligence workspace overview & telemetry
+      responses:
+        "200": { description: Overview payload }
+  /voice/conversations:
+    get:
+      summary: List captured & imported conversations
+      responses:
+        "200": { description: Conversation list }
+  /voice/conversations/capture:
+    post:
+      summary: Capture audio or live speech and run the 10-workstream pipeline
+      responses:
+        "201": { description: Conversation IR created }
+  /voice/conversations/import:
+    post:
+      summary: Import an existing recording or transcript with integrity metadata
+      responses:
+        "201": { description: Conversation IR imported }
+  /voice/conversations/{id}:
+    get:
+      summary: Fetch full Conversation IR (Recording, Participants, Utterances, Events, Knowledge, Reasoning, Corrections, Evidence)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Conversation IR }
+        "404": { description: Not found }
+  /voice/conversations/{id}/process:
+    post:
+      summary: Re-run or advance intelligence pipeline stages for a conversation
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Updated Conversation IR }
+  /voice/conversations/{id}/corrections:
+    post:
+      summary: Record an immutable human correction against transcript, speaker, or event
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201": { description: Correction recorded }
+  /voice/actions/{id}/decide:
+    post:
+      summary: Approve or reject a suggested action (Human-in-the-Loop gate)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Action updated }
+  /voice/memory/search:
+    get:
+      summary: Hybrid lexical + vector search over conversational memory and entities
+      responses:
+        "200": { description: Search results with source evidence references }
+  /voice/qa:
+    post:
+      summary: Source-grounded conversational Q&A with calibrated confidence
+      responses:
+        "200": { description: Grounded answer with utterance citations }
+  /voice/evidence/{id}/export:
+    get:
+      summary: Export verifiable evidence package with SHA-256 & chain-of-custody proof
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Verifiable evidence package }
+  /voice/evidence/{id}/legal-hold:
+    post:
+      summary: Toggle legal hold and retention protection on a conversation recording
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Legal hold status updated }
+  /voice/models/status:
+    get:
+      summary: Model Intelligence routing, adapters, benchmarks, and latency telemetry
+      responses:
+        "200": { description: Model telemetry }
+  /voice/sessions/start:
+    post:
+      summary: Start a streaming live or background call/mic capture session with OS capability guidance
+      responses:
+        "201": { description: CaptureSession initialized along with draft ConversationIR }
+  /voice/sessions/{id}:
+    get:
+      summary: Inspect capture session state, chunk watermark, and OS capture guidance
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: CaptureSession object }
+  /voice/sessions/{id}/chunk:
+    post:
+      summary: Stream an incremental audio/transcript chunk (idempotent by chunk_seq, channel-aware, background-capable)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Updated CaptureSession, live ConversationIR with interaction_edges, and deduplicated flag }
+  /voice/sessions/{id}/state:
+    post:
+      summary: Update session foreground/background/paused state (e.g. app backgrounded during call/mic session)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Updated CaptureSession }
+  /voice/sessions/{id}/finalize:
+    post:
+      summary: Finalize streaming session, finalize transcript/graph, and seal WS9 evidence custody
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Finalized CaptureSession and sealed ConversationIR }
+  /voice/recordings/presign-upload:
+    post:
+      summary: Reserve PostgreSQL-linked recording & conversation rows and issue AWS S3 SigV4 PUT presigned URL
+      responses:
+        "201": { description: PresignUploadResponse with S3 key, bucket, upload_url, and resolved caller context }
+  /voice/recordings/{id}/complete-upload:
+    post:
+      summary: Confirm S3 upload, link ETag/SHA-256 in PostgreSQL voice.recordings, and run 10 workstreams
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Updated ConversationIR + presigned GET download_url }
+  /voice/recordings/{id}/presign-download:
+    get:
+      summary: Issue short-lived S3 SigV4 GET URL for a PostgreSQL-linked recording
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Presigned GET URL and S3 metadata }
+  /voice/caller/resolve:
+    post:
+      summary: Resolve caller identity, relationship, business intel, spam pattern, conflict status, and call timeline (₹0 native DB)
+      responses:
+        "200": { description: CallerContextResponse }
+  /voice/caller/classify:
+    post:
+      summary: Classify an unknown post-call number (relationship, organization, purpose, spam) and link conversation
+      responses:
+        "200": { description: Updated CallerDirectoryEntry }
+  /voice/caller/report-spam:
+    post:
+      summary: Submit user spam report to update pattern risk scoring
+      responses:
+        "200": { description: Updated CallerDirectoryEntry with spam_score & spam_risk }
+  /voice/caller/directory-sync:
+    get:
+      summary: Export local caller intelligence entries for Android CallScreeningService and iOS CXCallDirectoryProvider
+      responses:
+        "200": { description: Synced caller directory entries }
+  /voice/caller/timeline:
+    get:
+      summary: Retrieve Caller Context + chronological Call Timeline for a phone number
+      responses:
+        "200": { description: CallerContextResponse }
+  /voice/conversations/{id}/caller:
+    post:
+      summary: Bind caller identity onto a conversation without requiring a spoken greeting
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Updated ConversationIR }
+  /voice/stream:
+    get:
+      summary: Server-Sent Events stream for real-time Voice Intelligence updates
+      responses:
+        "200": { description: SSE stream }
+components:
+  schemas:
+    ConversationIR:
+      type: object
+      required: [id, title, recording, participants, utterances, conversation_events]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        recording: { type: object }
+        participants: { type: array, items: { type: object } }
+        utterances: { type: array, items: { type: object } }
+        interaction_edges: { type: array, items: { type: object } }
+        conversation_events: { type: array, items: { type: object } }
+        extracted_knowledge: { type: object }
+        reasoning_results: { type: array, items: { type: object } }
+        action_suggestions: { type: array, items: { type: object } }
+        human_corrections: { type: array, items: { type: object } }
+        source_evidence_refs: { type: array, items: { type: object } }

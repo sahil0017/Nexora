@@ -18,12 +18,13 @@ import { useMe } from '../../../core/auth/useMe';
 const MODULE_INFO: Record<string, { label: string; desc: string }> = {
   move: { label: 'Mobility & Navigation', desc: 'Turn-by-turn routes, live traffic, places & alerts' },
   finance: { label: 'Wealth & Finance', desc: 'Net worth, accounts, tax planning & portfolio insights' },
+  voice: { label: 'Voice Intelligence', desc: 'Capture, speaker IR, reasoning, memory & verifiable custody' },
   assistant: { label: 'Copilot', desc: 'Personal AI assistant for commute, wealth & daily tasks' },
   health: { label: 'Health', desc: 'Reports, wellness records & health insights' },
   work: { label: 'Work', desc: 'Tasks, morning briefs & schedule automation' },
 };
 
-const MODULE_ORDER = ['move', 'finance', 'assistant', 'health', 'work'];
+const MODULE_ORDER = ['move', 'finance', 'voice', 'assistant', 'health', 'work'];
 
 const TABS = [
   { key: 'modules', label: 'Modules' },
@@ -71,7 +72,7 @@ export default function ExploreScreen() {
   });
 
   const modules = useMemo(() => {
-    const raw = me.data?.modules ?? ['move', 'finance', 'health', 'work'];
+    const raw = me.data?.modules ?? ['move', 'finance', 'voice', 'health', 'work'];
     return [...raw].sort((a, b) => {
       const ia = MODULE_ORDER.indexOf(a);
       const ib = MODULE_ORDER.indexOf(b);
@@ -85,6 +86,8 @@ export default function ExploreScreen() {
       nav.navigate('Mobility', { screen: 'Navigate' });
     } else if (k === 'finance') {
       nav.navigate('Finance');
+    } else if (k === 'voice') {
+      nav.navigate('Voice');
     } else if (k === 'assistant') {
       nav.navigate('AI');
     } else {
@@ -117,7 +120,7 @@ export default function ExploreScreen() {
             )}
             {modules.map((m, i) => {
               const info = MODULE_INFO[m];
-              const isLaunched = m === 'move' || m === 'finance' || m === 'assistant';
+              const isLaunched = m === 'move' || m === 'finance' || m === 'voice' || m === 'assistant';
               return (
                 <FadeIn key={m} index={i}>
                   <Tappable onPress={() => openModule(m)} accessibilityLabel={`${isLaunched ? 'Launch' : 'Open'} ${m}`}>

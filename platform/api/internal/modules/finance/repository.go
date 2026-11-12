@@ -462,10 +462,10 @@ func (m *MemoryRepository) SaveDigitalTwinSnapshot(_ context.Context, userID str
 	m.twinVer[userID]++
 }
 
-func (m *MemoryRepository) SaveMarketsAnalysis(_ context.Context, _ string, _, _ map[string]any)    {}
-func (m *MemoryRepository) SaveTaxEvaluation(_ context.Context, _ string, _, _ map[string]any)      {}
-func (m *MemoryRepository) SaveSimulationRun(_ context.Context, _ string, _, _ map[string]any)      {}
-func (m *MemoryRepository) SaveRadarOpportunities(_ context.Context, _ string, _ map[string]any)    {}
+func (m *MemoryRepository) SaveMarketsAnalysis(_ context.Context, _ string, _, _ map[string]any) {}
+func (m *MemoryRepository) SaveTaxEvaluation(_ context.Context, _ string, _, _ map[string]any)   {}
+func (m *MemoryRepository) SaveSimulationRun(_ context.Context, _ string, _, _ map[string]any)   {}
+func (m *MemoryRepository) SaveRadarOpportunities(_ context.Context, _ string, _ map[string]any) {}
 func (m *MemoryRepository) SaveCFOEvidenceAndDecision(_ context.Context, _, _ string, _ map[string]any) {
 }
 func (m *MemoryRepository) SaveKnowledgePropagation(_ context.Context, _ string, _, _ map[string]any) {
@@ -872,13 +872,13 @@ func (p *PostgresRepository) RecordTransactionAndEnqueue(ctx context.Context, tx
 	}
 
 	_ = events.EnqueueOutbox(ctx, tx, "finance.transaction.ingested.v1", "finance.transaction", txn.ID, txn.UserID, map[string]any{
-		"user_id":     txn.UserID,
-		"account_id":  txn.AccountID,
-		"txn_id":      txn.ID,
-		"amount":      txn.Amount,
-		"txn_type":    txn.TxnType,
-		"category":    txn.Category,
-		"source":      txn.SourceChannel,
+		"user_id":    txn.UserID,
+		"account_id": txn.AccountID,
+		"txn_id":     txn.ID,
+		"amount":     txn.Amount,
+		"txn_type":   txn.TxnType,
+		"category":   txn.Category,
+		"source":     txn.SourceChannel,
 	})
 
 	if err := tx.Commit(ctx); err != nil {

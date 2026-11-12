@@ -8,6 +8,7 @@ import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/desi
 import { colors, fontFamily, moduleColors, spacing, typography } from '../../../app/theme/tokens';
 import { digitalTwinApi, moveApi } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
+import { voiceApi } from '../../../core/api/voice';
 import { useMe } from '../../../core/auth/useMe';
 import { useLocation } from '../../../core/location/useLocation';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
@@ -104,6 +105,13 @@ export default function HomeScreen() {
     retry: 0,
   });
 
+  const voiceOverview = useQuery({
+    queryKey: ['home-voice-overview'],
+    queryFn: voiceApi.overview,
+    refetchInterval: 60_000,
+    retry: 0,
+  });
+
   const brainUp = status.data?.brain_reachable;
   const hazardCount = hazards.data?.hazards?.length ?? 0;
   const eventCount = activeEvents.data?.events?.length ?? 0;
@@ -118,6 +126,9 @@ export default function HomeScreen() {
 
   const openFinance = (screen?: 'FinTwin' | 'FinLedger' | 'FinWealth' | 'FinLab' | 'FinCFO') =>
     nav.navigate('Finance', screen ? { screen } : undefined);
+
+  const openVoice = (screen?: 'VoiceCapture' | 'VoiceTranscript' | 'VoiceMemory' | 'VoiceActions' | 'VoiceEvidence') =>
+    nav.navigate('Voice', screen ? { screen } : undefined);
 
   return (
     <Screen
@@ -286,6 +297,39 @@ export default function HomeScreen() {
           </View>
 
           <PrimaryButton title="Open Wealth Hub" onPress={() => openFinance('FinTwin')} />
+        </Card>
+      </FadeIn>
+
+      {/* Voice Intelligence Entry Card */}
+      <SectionHeading title="Voice Intelligence" action="Open Voice →" onActionPress={() => openVoice('VoiceCapture')} />
+      <FadeIn index={2}>
+        <Card variant="featured" style={{ gap: spacing.s }}>
+          <Tappable onPress={() => openVoice('VoiceCapture')} accessibilityLabel="Open Voice Intelligence">
+            <View style={styles.between}>
+              <View style={styles.modTitleRow}>
+                <View style={[styles.moduleIcon, { backgroundColor: 'rgba(167, 139, 250, 0.18)' }]}>
+                  <Text style={{ color: moduleColors.voice, fontSize: 15, fontWeight: '700' }}>◉</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mobilityHeading}>Voice Intelligence</Text>
+                  <Text style={styles.mobilitySub} numberOfLines={2}>
+                    Speaker IR, commitments, contradictions & cryptographic custody
+                  </Text>
+                </View>
+              </View>
+              <StatusPill
+                label={`${voiceOverview.data?.conversation_count ?? 1} IR`}
+                tone="info"
+              />
+            </View>
+          </Tappable>
+          <View style={styles.mobShortcutRow}>
+            <Chip label="🎙 Capture" active color={moduleColors.voice} onPress={() => openVoice('VoiceCapture')} />
+            <Chip label="📝 Transcript" onPress={() => openVoice('VoiceTranscript')} />
+            <Chip label="🧠 Memory & QA" onPress={() => openVoice('VoiceMemory')} />
+            <Chip label="🔒 Evidence" onPress={() => openVoice('VoiceEvidence')} />
+          </View>
+          <PrimaryButton title="Open Voice Workspace" onPress={() => openVoice('VoiceCapture')} />
         </Card>
       </FadeIn>
 
