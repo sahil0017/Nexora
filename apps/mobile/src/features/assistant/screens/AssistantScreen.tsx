@@ -22,7 +22,10 @@ import {
   moveApi,
   platformApi,
 } from '../../../core/api/move';
+import { financeApi } from '../../../core/api/finance';
 import { useLocation } from '../../../core/location/useLocation';
+import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
+import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
 
 type ContextChunk = { id: string; title: string; content: string; relevance_score: number };
 
@@ -32,6 +35,8 @@ type Msg = {
   text: string;
   meta?: string;
   intent?: string;
+  actions?: string[];
+  financeDomain?: boolean;
   context?: ContextChunk[];
   explainability?: RouteExplainability;
   error?: boolean;
@@ -40,25 +45,39 @@ type Msg = {
 const DOMAINS = [
   { key: 'all', label: 'All' },
   { key: 'move', label: 'Move' },
-  { key: 'health', label: 'Health' },
   { key: 'finance', label: 'Finance' },
+  { key: 'health', label: 'Health' },
   { key: 'work', label: 'Work' },
 ] as const;
 
-const MULTILINGUAL_PROMPTS = [
+const DUAL_BRAIN_PROMPTS = [
+  { label: '💰 Audit Tax & Cash', query: 'Audit my cash, unused deductions & best income tax regime.' },
+  { label: '📈 Prepay vs SIP', query: 'Should I prepay my floating loan or increase monthly equity SIP?' },
   { label: '✨ Why this route?', query: 'Why is this route recommended right now?' },
   { label: '🌐 City Twin Brief', query: 'Summarize the live digital twin corridor health, pedestrian safety, and crowd risk.' },
   { label: '🛡 Safety & Memory', query: 'Check pedestrian safety, animal conflict warnings, and road memory hazards near me.' },
-  { label: 'EN · Best route now', query: 'What is the most reliable route during peak traffic?' },
   { label: 'తెలుగు · రూట్ సలహా', query: 'ట్రాఫిక్ ఎక్కువగా ఉన్నప్పుడు ఏ రూట్ మంచిది?' },
   { label: 'हिन्दी · ट्रैफिक अपडेट', query: 'पीक टाइम में सबसे भरोसेमंद रास्ता कौन सा है?' },
 ] as const;
+
+const FINANCE_KEYWORDS = [
+  'tax', 'regime', '80c', '80d', 'sip', 'mutual fund', 'mf', 'loan', 'emi', 'prepay',
+  'net worth', 'portfolio', 'ltcg', 'stcg', 'salary', 'cfo', 'insurance', 'budget',
+  'cash', 'runway', 'invest', 'debt', 'lrs', 'fd', 'gst', 'rupee', '₹', 'inr',
+];
+
+function isFinancePrompt(text: string, activeDomain: string): boolean {
+  if (activeDomain === 'finance') return true;
+  if (activeDomain === 'move') return false;
+  const lower = text.toLowerCase();
+  return FINANCE_KEYWORDS.some(k => lower.includes(k));
+}
 
 let nextId = 1;
 const INITIAL_MSG: Msg = {
   id: nextId++,
   from: 'assistant',
-  text: 'How can I help? Ask about routes, traffic hazards, health, finances or tasks (English, తెలుగు, हिन्दी).',
+  text: 'NEXORA Dual-Brain Copilot ready. Ask MoveSmart about traffic, safety & routes (EN/TE/HI) or ask AI CFO about taxes, SIP vs loan prepayment, net worth & cash runway.',
 };
 
 // AI-01 Interactive Copilot workspace with domain steering, expandable RAG context, GPS context, & action deep links.
@@ -66,6 +85,7 @@ export default function AssistantScreen() {
   const route = useRoute<any>();
   const nav = useNavigation<any>();
   const loc = useLocation();
+  const { permissions } = usePrivacyPermissions();
 
   const [messages, setMessages] = useState<Msg[]>([INITIAL_MSG]);
   const [draft, setDraft] = useState('');
@@ -84,13 +104,26 @@ export default function AssistantScreen() {
     retry: 0,
   });
 
+  const finTwin = useQuery({
+    queryKey: ['copilot-finance-twin'],
+    queryFn: financeApi.digitalTwin,
+    retry: 0,
+  });
+
+  const finRadar = useQuery({
+    queryKey: ['copilot-finance-radar'],
+    queryFn: financeApi.radarOpportunities,
+    retry: 0,
+  });
+
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   const ask = useMutation({
     mutationFn: async (vars: { raw: string; routeContext?: RouteContextPayload }) => {
+      const useFinanceBrain = isFinancePrompt(vars.raw, domain);
       const prefix = domain !== 'all' ? `[Focus: ${domain}] ` : '';
       const gpsSuffix =
-        attachGps && loc.point
+        !useFinanceBrain && attachGps && loc.point
           ? ` (Near ${loc.point.latitude.toFixed(4)}, ${loc.point.longitude.toFixed(4)})`
           : '';
       const enriched = `${prefix}${vars.raw}${gpsSuffix}`;
@@ -99,16 +132,47 @@ export default function AssistantScreen() {
       if (conversationId) {
         platformApi.sendConversationMessage(conversationId, enriched).catch(() => undefined);
       }
-      return moveApi.assistantQuery(
+
+      if (useFinanceBrain) {
+        if (!usePrivacyPermissions.getState().permissions.aiCfoTelemetry) {
+          throw new Error('AI CFO context sharing is disabled in Privacy & Access');
+        }
+        const cfo = await financeApi.queryCFO(vars.raw);
+        return { kind: 'finance' as const, cfo };
+      }
+
+      const mob = await moveApi.assistantQuery(
         enriched,
         vars.routeContext ?? activeRouteCtx,
         attachGps ? loc.point : undefined,
       );
+      return { kind: 'mobility' as const, mob };
     },
-    onSuccess: r => {
+    onSuccess: res => {
+      if (res.kind === 'finance') {
+        const { cfo } = res;
+        const piiNote = cfo.evidence_bundle?.privacy_firewall?.pii_scrubbed
+          ? `PII Scrubbed (${cfo.evidence_bundle.privacy_firewall.redacted_tokens_count ?? 0})`
+          : 'Privacy Firewall Verified';
+        const conf = cfo.evidence_bundle?.confidence_tier ?? 'HIGH CONFIDENCE';
+        setMessages(m => [
+          ...m,
+          {
+            id: nextId++,
+            from: 'assistant',
+            text: cfo.cfo_synthesis,
+            meta: `AI CFO · ${piiNote} · ${conf}${cfo.requires_action_approval ? ' · Approval Required' : ''}`,
+            actions: cfo.prioritized_actions,
+            financeDomain: true,
+          },
+        ]);
+        return;
+      }
+
+      const r = res.mob;
       const lang = (r.language ?? r.detected_language ?? 'en').toUpperCase();
       const topCtx = r.retrieved_context?.[0]?.title;
-      const meta = [lang, r.model_version, topCtx].filter(Boolean).join(' · ');
+      const meta = ['MoveSmart', lang, r.model_version, topCtx].filter(Boolean).join(' · ');
       setMessages(m => [
         ...m,
         {
@@ -160,9 +224,9 @@ export default function AssistantScreen() {
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
-              <Text style={[typography.screenTitle, { color: colors.textPrimary }]}>Copilot</Text>
+              <Text style={[typography.screenTitle, { color: colors.textPrimary }]}>Dual-Brain Copilot</Text>
               <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
-                Context-aware AI · {conversationId ? 'Thread saved' : 'Instant NLU/RAG'}
+                MoveSmart + AI CFO · {conversationId ? 'Thread saved' : 'Privacy Firewall Active'}
               </Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -180,7 +244,7 @@ export default function AssistantScreen() {
           <View style={{ marginTop: 10 }}>
             <SegmentedControl compact options={[...DOMAINS]} value={domain} onChange={setDomain} />
           </View>
-          {brief.data ? (
+          {domain !== 'finance' && brief.data ? (
             <TouchableOpacity
               onPress={() => submit(`Explain corridor status: ${brief.data.headline}`)}
               style={{
@@ -193,7 +257,29 @@ export default function AssistantScreen() {
                 borderColor: 'rgba(34, 211, 238, 0.30)',
               }}>
               <Text style={{ color: colors.routeCyan, fontSize: 11.5, fontWeight: '700' }} numberOfLines={1}>
-                🌐 Proactive Brief: {brief.data.headline}
+                🌐 Mobility Brief: {brief.data.headline}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {domain !== 'move' && finTwin.data ? (
+            <TouchableOpacity
+              onPress={() => submit('Audit my net worth, safe to spend & top tax/investment actions right now.')}
+              style={{
+                marginTop: 6,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 10,
+                backgroundColor: 'rgba(163, 230, 53, 0.11)',
+                borderWidth: 1,
+                borderColor: 'rgba(163, 230, 53, 0.28)',
+              }}>
+              <Text style={{ color: moduleColors.finance, fontSize: 11.5, fontWeight: '700' }} numberOfLines={1}>
+                ₹ Finance Twin: Net Worth {formatINR(finTwin.data.net_worth_inr)} · Health{' '}
+                {finTwin.data.health_score}/100
+                {finRadar.data && finRadar.data.total_annualized_savings_inr > 0
+                  ? ` · +${formatINR(finRadar.data.total_annualized_savings_inr)}/yr radar`
+                  : ''}
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -282,7 +368,39 @@ export default function AssistantScreen() {
                   </View>
                 )}
 
-                {showRouteActions && (
+                {m.actions && m.actions.length > 0 && (
+                  <View style={styles.ctxBox}>
+                    <Text style={[styles.explainHeading, { color: moduleColors.finance }]}>PRIORITIZED ACTIONS</Text>
+                    {m.actions.map((act, idx) => (
+                      <Text key={idx} style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16 }}>
+                        • {act}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+
+                {m.financeDomain && (
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      onPress={() => nav.navigate('Finance', { screen: 'FinTwin' })}
+                      style={[
+                        styles.deepLinkBtn,
+                        { backgroundColor: 'rgba(163, 230, 53, 0.14)', borderColor: moduleColors.finance },
+                      ]}>
+                      <Text style={[styles.deepLinkText, { color: moduleColors.finance }]}>Open FinTwin →</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => nav.navigate('Finance', { screen: 'FinCFO' })}
+                      style={[
+                        styles.deepLinkBtn,
+                        { backgroundColor: 'rgba(163, 230, 53, 0.08)', borderColor: 'rgba(163, 230, 53, 0.35)' },
+                      ]}>
+                      <Text style={[styles.deepLinkText, { color: moduleColors.finance }]}>AI CFO & Firewall →</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {showRouteActions && !m.financeDomain && (
                   <View style={styles.actionRow}>
                     <TouchableOpacity
                       onPress={() => nav.navigate('Mobility', { screen: 'Navigate' })}
@@ -311,17 +429,29 @@ export default function AssistantScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.modulesRow}>
           <Chip
-            label={attachGps && loc.point ? '📍 GPS On' : '📍 GPS Off'}
-            active={attachGps && !!loc.point}
-            onPress={() => setAttachGps(v => !v)}
+            label={
+              !permissions.gpsLocation
+                ? '🔒 GPS Permission Off'
+                : attachGps && loc.point
+                ? '📍 GPS On'
+                : '📍 GPS Off'
+            }
+            active={permissions.gpsLocation && attachGps && !!loc.point}
+            onPress={() => {
+              if (!permissions.gpsLocation) {
+                nav.navigate('PrivacyPermissions');
+                return;
+              }
+              setAttachGps(v => !v);
+            }}
           />
-          {MULTILINGUAL_PROMPTS.map(p => (
+          {DUAL_BRAIN_PROMPTS.map(p => (
             <Chip key={p.label} label={p.label} onPress={() => submit(p.query)} />
           ))}
         </ScrollView>
 
         <View style={styles.domainStrip}>
-          {(['move', 'health', 'finance', 'work'] as const).map(k => (
+          {(['move', 'finance', 'health', 'work'] as const).map(k => (
             <Tappable key={k} onPress={() => setDomain(k)} style={styles.moduleChip}>
               <View style={[styles.dot, { backgroundColor: moduleColors[k] }]} />
               <Text style={{ color: domain === k ? colors.textPrimary : colors.textSecondary, fontSize: 11.5, fontWeight: '700', textTransform: 'capitalize' }}>
@@ -334,7 +464,7 @@ export default function AssistantScreen() {
         <View style={styles.composer}>
           <TextInput
             style={styles.input}
-            placeholder="Ask NEXORA anything…"
+            placeholder={domain === 'finance' ? 'Ask AI CFO (taxes, SIP vs loan, cash)…' : 'Ask MoveSmart or AI CFO…'}
             placeholderTextColor={colors.textMuted}
             value={draft}
             onChangeText={setDraft}

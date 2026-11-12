@@ -44,6 +44,19 @@ stack_output() {
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
 
+live_public_ip() {
+  local iid ip=""
+  iid="$(stack_output InstanceId 2>/dev/null || true)"
+  if [ -n "$iid" ] && [ "$iid" != "None" ]; then
+    ip="$("$AWS" ec2 describe-instances --instance-ids "$iid" \
+      --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null || true)"
+  fi
+  if [ -z "$ip" ] || [ "$ip" = "None" ]; then
+    ip="$(stack_output PublicIp)"
+  fi
+  echo "$ip"
+}
+
 # ssm_run <timeout-seconds> <command...>  — runs a shell command on the instance, prints output.
 ssm_run() {
   local timeout="$1"; shift
@@ -103,7 +116,7 @@ deploy() {
   rds_port="$(stack_output DBPort)"
   sns_topic="$(stack_output EventsTopicArn)"
   sqs_queue="$(stack_output IntelligenceQueueUrl)"
-  public_ip="$(stack_output PublicIp)"
+  public_ip="$(live_public_ip)"
   tag="$(date -u +%Y%m%d%H%M%S)"
   echo "RDS: $rds_host:$rds_port   bucket: $bucket   SNS: $sns_topic   SQS: $sqs_queue   domain: ${public_ip}.sslip.io   release: $tag"
 
@@ -181,8 +194,9 @@ status() {
   step "Stack outputs"
   "$AWS" cloudformation describe-stacks --stack-name "$STACK" \
     --query "Stacks[0].Outputs" --output table 2>/dev/null || die "stack '$STACK' not found"
-  local url; url="$(stack_output ApiUrl)"
-  step "Health check $url"
+  local ip; ip="$(live_public_ip)"
+  local url="https://${ip}.sslip.io/api/v1/healthz"
+  step "Health check $url (live IP: $ip)"
   curl -s -m 10 "$url" && echo || echo "(unreachable)"
 }
 
@@ -279,7 +293,7 @@ start_stack() {
 
   wait_ssm
   deploy_config
-  new_ip="$(stack_output PublicIp)"
+  new_ip="$(live_public_ip)"
   step "Resume complete. HTTPS API: https://${new_ip}.sslip.io/api/v1/healthz"
 }
 
@@ -322,7 +336,7 @@ write_env_file() {
   rds_port="$(stack_output DBPort)"
   sns_topic="$(stack_output EventsTopicArn)"
   sqs_queue="$(stack_output IntelligenceQueueUrl)"
-  public_ip="$(stack_output PublicIp)"
+  public_ip="$(live_public_ip)"
   {
     echo "AWS_REGION=$REGION"
     echo "AWS_ACCOUNT_ID=$account"

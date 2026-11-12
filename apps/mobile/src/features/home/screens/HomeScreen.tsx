@@ -7,21 +7,23 @@ import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system
 import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-system/motion';
 import { colors, moduleColors, spacing, typography } from '../../../app/theme/tokens';
 import { digitalTwinApi, moveApi } from '../../../core/api/move';
+import { financeApi } from '../../../core/api/finance';
 import { useMe } from '../../../core/auth/useMe';
 import { useLocation } from '../../../core/location/useLocation';
+import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
+import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
 
 const SECONDARY_MODULES = [
   { key: 'health', title: 'Health', desc: 'Reports & wellness timeline' },
-  { key: 'finance', title: 'Finance', desc: 'Spending & commute budgets' },
   { key: 'work', title: 'Work', desc: 'Tasks, prep & schedules' },
 ] as const;
 
 function quickActions(d = new Date()) {
   const h = d.getHours();
-  const base = ['Any road hazards near me?', 'Show my health summary'];
-  if (h < 11) return ['When should I leave for work?', 'How is traffic right now?', ...base];
-  if (h < 17) return ['Plan my next trip', 'How is traffic right now?', ...base];
-  return ['Best way home now?', 'How is traffic right now?', ...base];
+  const financePrompts = ['Audit cash & tax savings', 'Prepay loan or increase SIP?'];
+  if (h < 11) return ['When should I leave for work?', 'How is traffic right now?', ...financePrompts];
+  if (h < 17) return ['Plan my next trip', 'How is traffic right now?', ...financePrompts];
+  return ['Best way home now?', 'Any road hazards near me?', ...financePrompts];
 }
 
 function greeting(d = new Date()) {
@@ -35,9 +37,9 @@ function greeting(d = new Date()) {
 function contextLine(d = new Date()) {
   const h = d.getHours();
   const weekday = d.getDay() > 0 && d.getDay() < 6;
-  if (weekday && h >= 7 && h < 11) return 'Morning commute ready — live traffic, routes & daily updates.';
-  if (weekday && h >= 16 && h < 21) return 'Heading home? Check live traffic, fastest routes & road alerts.';
-  return 'Your smart daily companion for commute, health, money & tasks.';
+  if (weekday && h >= 7 && h < 11) return 'Morning brief — live commute, wealth twin & AI copilot ready.';
+  if (weekday && h >= 16 && h < 21) return 'Evening pulse — live traffic, tax/SIP insights & daily wrap.';
+  return 'Dual-brain daily companion for mobility, finance & smart tasks.';
 }
 
 // HM-01 NEXORA Super-App Home — multi-module launcher with dedicated Mobility workspace entry.
@@ -45,6 +47,7 @@ export default function HomeScreen() {
   const nav = useNavigation<any>();
   const me = useMe();
   const loc = useLocation();
+  const { permissions, consentConfigured } = usePrivacyPermissions();
   const [aiExpanded, setAiExpanded] = useState(false);
 
   const status = useQuery({
@@ -87,6 +90,20 @@ export default function HomeScreen() {
     retry: 0,
   });
 
+  const finTwin = useQuery({
+    queryKey: ['home-finance-twin'],
+    queryFn: financeApi.digitalTwin,
+    refetchInterval: 30_000,
+    retry: 0,
+  });
+
+  const finRadar = useQuery({
+    queryKey: ['home-finance-radar'],
+    queryFn: financeApi.radarOpportunities,
+    refetchInterval: 60_000,
+    retry: 0,
+  });
+
   const brainUp = status.data?.brain_reachable;
   const hazardCount = hazards.data?.hazards?.length ?? 0;
   const eventCount = activeEvents.data?.events?.length ?? 0;
@@ -98,6 +115,9 @@ export default function HomeScreen() {
 
   const openMobility = (screen?: 'Navigate' | 'Radar' | 'Places' | 'MovePrefs') =>
     nav.navigate('Mobility', screen ? { screen } : undefined);
+
+  const openFinance = (screen?: 'FinTwin' | 'FinLedger' | 'FinWealth' | 'FinLab' | 'FinCFO') =>
+    nav.navigate('Finance', screen ? { screen } : undefined);
 
   return (
     <Screen
@@ -112,6 +132,24 @@ export default function HomeScreen() {
           </Text>
         </TouchableOpacity>
       }>
+      {!consentConfigured ? (
+        <FadeIn index={0}>
+          <Card variant="featured" style={{ gap: spacing.s, marginBottom: spacing.m }}>
+            <View style={styles.between}>
+              <Text style={styles.mobilityHeading}>Review What NEXORA Can Access</Text>
+              <StatusPill label="PRIVACY FIRST" tone="warning" />
+            </View>
+            <Text style={styles.mobilitySub}>
+              Choose individually whether Location (GPS), Bank/UPI Alerts, Vault Email, Clipboard, or AI CFO context are allowed.
+            </Text>
+            <PrimaryButton
+              title="Set Data & Access Permissions →"
+              onPress={() => nav.navigate('PrivacyPermissions')}
+            />
+          </Card>
+        </FadeIn>
+      ) : null}
+
       {/* Flagship Mobility & Navigation Entry Card */}
       <SectionHeading title="Commute & navigation" action="Open map →" onActionPress={() => openMobility('Navigate')} />
       <FadeIn index={0}>
@@ -122,9 +160,11 @@ export default function HomeScreen() {
                 <View style={[styles.moduleIcon, { backgroundColor: 'rgba(29, 143, 225, 0.2)' }]}>
                   <Text style={{ color: colors.navBlue, fontSize: 16, fontWeight: '900' }}>➤</Text>
                 </View>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.mobilityHeading}>MoveSmart Navigation</Text>
-                  <Text style={styles.mobilitySub}>Turn-by-turn routes, live traffic, road alerts & saved places</Text>
+                  <Text style={styles.mobilitySub} numberOfLines={2}>
+                    Turn-by-turn routes, live traffic & alerts
+                  </Text>
                 </View>
               </View>
               <StatusPill
@@ -136,7 +176,9 @@ export default function HomeScreen() {
 
           <View style={styles.mobStatsRow}>
             <View style={styles.mobStat}>
-              <Text style={styles.mobStatVal}>{avgSpeed !== null ? `${avgSpeed} km/h` : loc.point ? 'Live' : 'Locating'}</Text>
+              <Text style={styles.mobStatVal}>
+                {avgSpeed !== null ? `${avgSpeed} km/h` : !permissions.gpsLocation ? 'GPS Off' : loc.point ? 'Live' : 'Locating'}
+              </Text>
               <Text style={styles.mobStatLbl}>Traffic speed</Text>
             </View>
             <View style={styles.mobStat}>
@@ -170,11 +212,88 @@ export default function HomeScreen() {
         </Card>
       </FadeIn>
 
-      {/* Daily Essentials */}
-      <SectionHeading title="Daily essentials" action="View all →" onActionPress={() => nav.navigate('Explore')} />
+      {/* Flagship Finance Intelligence Entry Card */}
+      <SectionHeading title="Wealth & Tax Twin" action="Launch Finance →" onActionPress={() => openFinance('FinTwin')} />
+      <FadeIn index={1}>
+        <Card variant="featured" style={{ gap: spacing.s }}>
+          <Tappable onPress={() => openFinance('FinTwin')} accessibilityLabel="Launch Finance Intelligence">
+            <View style={styles.between}>
+              <View style={styles.modTitleRow}>
+                <View style={[styles.moduleIcon, { backgroundColor: 'rgba(163, 230, 53, 0.18)' }]}>
+                  <Text style={{ color: moduleColors.finance, fontSize: 16, fontWeight: '900' }}>₹</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mobilityHeading}>Finance Intelligence</Text>
+                  <Text style={styles.mobilitySub} numberOfLines={2}>
+                    Zero-AA Edge Vault, Tax, Monte Carlo & AI CFO
+                  </Text>
+                </View>
+              </View>
+              <StatusPill
+                label={finTwin.data ? `HEALTH ${finTwin.data.health_score}/100` : 'E2EE LIVE'}
+                tone={
+                  finTwin.data
+                    ? finTwin.data.health_score >= 75
+                      ? 'success'
+                      : 'warning'
+                    : 'info'
+                }
+              />
+            </View>
+          </Tappable>
+
+          <View style={styles.mobStatsRow}>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: moduleColors.finance }]}>
+                {finTwin.data ? formatINR(finTwin.data.net_worth_inr) : 'Syncing'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Net worth</Text>
+            </View>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: colors.accentBright }]}>
+                {finTwin.data ? formatINR(finTwin.data.safe_to_spend_inr) : '—'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Safe to spend</Text>
+            </View>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: colors.textPrimary }]}>
+                {finTwin.data ? `${finTwin.data.emergency_runway_months.toFixed(1)} mo` : '—'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Runway</Text>
+            </View>
+          </View>
+
+          <View
+            style={[
+              styles.preTravelPill,
+              {
+                backgroundColor: 'rgba(163, 230, 53, 0.10)',
+                borderColor: 'rgba(163, 230, 53, 0.28)',
+              },
+            ]}>
+            <Text style={[styles.preTravelText, { color: moduleColors.finance }]}>
+              {finRadar.data && finRadar.data.total_annualized_savings_inr > 0
+                ? `⚡ Radar: ${formatINR(finRadar.data.total_annualized_savings_inr)}/yr tax & cash savings ready`
+                : '🔒 Edge-Masked Zero-AA · Auto-Discover accounts, EMIs & SIPs with E2EE'}
+            </Text>
+          </View>
+
+          <View style={styles.mobShortcutRow}>
+            <Chip label="📊 Twin" active color={moduleColors.finance} onPress={() => openFinance('FinTwin')} />
+            <Chip label="📥 Ledger" onPress={() => openFinance('FinLedger')} />
+            <Chip label="🧮 Tax & Lab" onPress={() => openFinance('FinLab')} />
+            <Chip label="🤖 AI CFO" onPress={() => openFinance('FinCFO')} />
+          </View>
+
+          <PrimaryButton title="Launch Finance Hub" onPress={() => openFinance('FinTwin')} />
+        </Card>
+      </FadeIn>
+
+      {/* More NEXORA Modules */}
+      <SectionHeading title="More essentials" action="View all →" onActionPress={() => nav.navigate('Explore')} />
       <View style={styles.grid}>
         {SECONDARY_MODULES.map((m, i) => (
-          <FadeIn key={m.key} index={i + 1} style={styles.moduleWrap}>
+          <FadeIn key={m.key} index={i + 2} style={styles.moduleWrap}>
             <Tappable
               onPress={() => nav.navigate('ModuleHub', { module: m.key })}
               accessibilityLabel={m.title}>

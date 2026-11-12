@@ -3,7 +3,7 @@ import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { NavMapCanvas } from '../../../shared/components/NavMapCanvas';
+import { NavMapCanvas, QuickReportHazardKind } from '../../../shared/components/NavMapCanvas';
 import { QuickSettingsSheet } from '../../../shared/components/QuickSettingsSheet';
 import {
   Card,
@@ -50,7 +50,6 @@ export default function ActivityScreen() {
   const nav = useNavigation<any>();
   const qc = useQueryClient();
   const me = useMe();
-  const loc = useLocation();
   const userId = me.data?.id;
 
   const [lens, setLens] = useState<(typeof LENSES)[number]['key']>('all');
@@ -59,6 +58,23 @@ export default function ActivityScreen() {
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const [focusedMode, setFocusedMode] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [radarFullScreen, setRadarFullScreen] = useState(false);
+  const [radarTraceOn, setRadarTraceOn] = useState(true);
+
+  const loc = useLocation({
+    watch: radarFullScreen,
+    traceEnabled: radarFullScreen && radarTraceOn,
+    distanceIntervalM: 5,
+    timeIntervalMs: 3000,
+  });
+
+  const spatialRadarQuery = useQuery({
+    queryKey: ['spatial-radar-activity', loc.point ? Math.round(loc.point.latitude * 200) : null, loc.point ? Math.round(loc.point.longitude * 200) : null],
+    queryFn: () => moveDataApi.spatialRadar(loc.point!, 2500),
+    enabled: !!loc.point && radarFullScreen,
+    refetchInterval: 12_000,
+    retry: 0,
+  });
 
   const insights = useQuery({
     queryKey: ['commute-insights', userId],
@@ -188,6 +204,18 @@ export default function ActivityScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['digital-twin-state'] }),
   });
 
+  const sendAnonymousPing = useMutation({
+    mutationFn: () =>
+      digitalTwinApi.sendPrivacyTelemetry([
+        {
+          latitude: loc.point!.latitude,
+          longitude: loc.point!.longitude,
+          ephemeral_token: `eph-${Date.now()}`,
+        },
+      ]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['privacy-status'] }),
+  });
+
   const refreshing = insights.isRefetching || hazards.isRefetching || status.isRefetching || demand.isRefetching || digitalTwin.isRefetching;
   const refetchAll = () => {
     insights.refetch();
@@ -260,6 +288,28 @@ export default function ActivityScreen() {
             hazards={hazards.data?.hazards ?? []}
             trafficSegments={trafficSegs.data?.segments ?? []}
             transitStops={stops.data?.stops ?? []}
+            tracePoints={loc.tracePoints}
+            liveHeadingDeg={loc.headingDeg}
+            liveSpeedKmph={loc.speedKmph}
+            accuracyM={loc.accuracyM}
+            tracedDistanceM={loc.tracedDistanceM}
+            tracingActive={radarTraceOn && loc.isWatching}
+            onToggleTracing={() => setRadarTraceOn(v => !v)}
+            onClearTrace={loc.clearTrace}
+            spatialRadar={spatialRadarQuery.data}
+            onQuickReportHazard={(kind: QuickReportHazardKind) => {
+              if (!loc.point) return;
+              if (kind === 'animal_crossing') {
+                reportAnimal.mutate();
+              } else if (kind === 'pothole' || kind === 'waterlogging') {
+                observeRoadMemory.mutate(kind);
+              } else {
+                reportHazard.mutate(kind);
+              }
+            }}
+            reportBusy={reportAnimal.isPending || observeRoadMemory.isPending || reportHazard.isPending}
+            fullScreen={radarFullScreen}
+            onToggleFullScreen={() => setRadarFullScreen(v => !v)}
             height={195}
             onOpenSettings={() => setSettingsOpen(true)}
             onRecenter={loc.refresh}
@@ -300,9 +350,10 @@ export default function ActivityScreen() {
                 twin={digitalTwin.data}
                 privacy={privacyStatus.data}
                 loading={digitalTwin.isLoading}
-                submittingAction={reportAnimal.isPending || observeRoadMemory.isPending}
+                submittingAction={reportAnimal.isPending || observeRoadMemory.isPending || sendAnonymousPing.isPending}
                 onReportAnimal={() => reportAnimal.mutate()}
                 onReinforceRoadMemory={cond => observeRoadMemory.mutate(cond)}
+                onContributePrivacyPing={() => sendAnonymousPing.mutate()}
               />
               <UrbanSimulatorCard
                 result={runSimulation.data}

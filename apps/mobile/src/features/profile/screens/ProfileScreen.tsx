@@ -6,11 +6,14 @@ import { Screen } from '../../../shared/components/Screen';
 import { QuickSettingsSheet } from '../../../shared/components/QuickSettingsSheet';
 import { Card, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-system/motion';
-import { colors, spacing } from '../../../app/theme/tokens';
+import { colors, moduleColors, spacing } from '../../../app/theme/tokens';
 import { modeLabel, platformApi } from '../../../core/api/move';
+import { financeApi } from '../../../core/api/finance';
 import { getAuthToken, setAuthToken } from '../../../core/api/client';
 import { useMe } from '../../../core/auth/useMe';
+import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { useNavPreferences } from '../../../core/state/useNavPreferences';
+import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
 
 function initialsOf(name?: string) {
   if (!name) return 'NX';
@@ -22,9 +25,8 @@ function initialsOf(name?: string) {
 }
 
 const UPCOMING_MODULES = [
-  { id: 'health', label: 'Health', tag: 'Vitals & Care' },
-  { id: 'finance', label: 'Finance', tag: 'Spend & Budget' },
-  { id: 'work', label: 'Work', tag: 'Focus & Tasks' },
+  { id: 'health', label: 'Health', tag: 'Vitals & Care · Next' },
+  { id: 'work', label: 'Work', tag: 'Focus & Tasks · Next' },
 ] as const;
 
 // PR-01 Clean NEXORA Profile, Account Session, Active Modules & Cloud Status.
@@ -33,6 +35,9 @@ export default function ProfileScreen() {
   const qc = useQueryClient();
   const me = useMe();
   const navPrefs = useNavPreferences();
+  const { permissions, consentConfigured } = usePrivacyPermissions();
+  const activePermsCount = Object.values(permissions).filter(Boolean).length;
+  const totalPermsCount = Object.keys(permissions).length;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -51,6 +56,24 @@ export default function ProfileScreen() {
   const ready = useQuery({
     queryKey: ['platform-ready'],
     queryFn: platformApi.ready,
+    retry: 0,
+  });
+
+  const finTwin = useQuery({
+    queryKey: ['profile-finance-twin'],
+    queryFn: financeApi.digitalTwin,
+    retry: 0,
+  });
+
+  const finAccounts = useQuery({
+    queryKey: ['profile-finance-accounts'],
+    queryFn: financeApi.accounts,
+    retry: 0,
+  });
+
+  const finChannels = useQuery({
+    queryKey: ['profile-finance-channels'],
+    queryFn: financeApi.channels,
     retry: 0,
   });
 
@@ -164,11 +187,30 @@ export default function ProfileScreen() {
 
           <View style={styles.divider} />
 
+          <Tappable
+            onPress={() => nav.navigate('Finance')}
+            style={styles.moduleRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.rowInline}>
+                <Text style={styles.rowTitle}>Finance · AI Wealth & Tax Twin</Text>
+                <StatusPill label="LIVE" tone="success" />
+              </View>
+              <Text style={styles.sub}>
+                {finTwin.data
+                  ? `Net Worth ${formatINR(finTwin.data.net_worth_inr)} · Health ${finTwin.data.health_score}/100 · ${finAccounts.data?.count ?? 0} accts · ${finChannels.data?.channels?.length ?? 0} channels`
+                  : 'Zero-AA Smart Sync · Edge E2EE · Indian Tax & AI CFO'}
+              </Text>
+            </View>
+            <Text style={[styles.chevron, { color: moduleColors.finance }]}>Launch ›</Text>
+          </Tappable>
+
+          <View style={styles.divider} />
+
           <View style={styles.upcomingGrid}>
             {UPCOMING_MODULES.map(m => (
               <Tappable
                 key={m.id}
-                onPress={() => nav.navigate('ModuleHub', { moduleId: m.id })}
+                onPress={() => nav.navigate('ModuleHub', { module: m.id })}
                 style={styles.upcomingPill}>
                 <Text style={styles.upcomingTitle}>{m.label}</Text>
                 <Text style={styles.upcomingTag}>{m.tag}</Text>
@@ -180,17 +222,45 @@ export default function ProfileScreen() {
 
       {/* 3. Preferences & Cloud Status */}
       <SectionHeading
-        title="App & Cloud"
+        title="Privacy, App & Cloud"
         action="Ping API"
         onActionPress={() => {
           health.refetch();
           ready.refetch();
+          finTwin.refetch();
         }}
       />
       <FadeIn index={2}>
         <Card style={{ gap: spacing.s }}>
+          <Tappable onPress={() => nav.navigate('PrivacyPermissions')} style={styles.between}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Privacy & Data Access Permissions</Text>
+              <Text style={styles.sub}>
+                Control GPS, Bank/UPI Alerts, Vault Email, Clipboard & AI CFO ({activePermsCount}/{totalPermsCount} active)
+              </Text>
+            </View>
+            <StatusPill
+              label={consentConfigured ? `${activePermsCount}/${totalPermsCount} ALLOWED` : 'REVIEW'}
+              tone={consentConfigured ? 'success' : 'warning'}
+            />
+          </Tappable>
+
+          <View style={styles.divider} />
+
+          <Tappable onPress={() => nav.navigate('Finance', { screen: 'FinLedger' })} style={styles.between}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Zero-AA Vault & E2EE Firewall</Text>
+              <Text style={styles.sub}>
+                On-device PII masking + client E2EE envelope · Tax Kernel FY26-27 (Auto)
+              </Text>
+            </View>
+            <StatusPill label={permissions.edgePiiMasking ? 'ARMED' : 'PAUSED'} tone={permissions.edgePiiMasking ? 'info' : 'warning'} />
+          </Tappable>
+
+          <View style={styles.divider} />
+
           <Tappable onPress={() => setSettingsOpen(true)} style={styles.between}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>HUD & Map Display</Text>
               <Text style={styles.sub}>
                 {navPrefs.viewMode} view · {navPrefs.mapStyle} map · {navPrefs.soundMode} alerts
@@ -206,7 +276,7 @@ export default function ProfileScreen() {
           ) : health.data ? (
             <>
               <Tappable onPress={() => setShowStackDiag(v => !v)} style={styles.between}>
-                <View style={styles.rowInline}>
+                <View style={[styles.rowInline, { flex: 1 }]}>
                   <StatusPill
                     label={`API ${health.data.status.toUpperCase()} · READY: ${ready.data?.status?.toUpperCase() ?? '...'}`}
                     tone={health.data.status === 'ok' ? 'success' : 'warning'}
@@ -262,10 +332,10 @@ const styles = StyleSheet.create({
   linkBtnText: { color: colors.navBlue, fontSize: 12.5, fontWeight: '700' },
   authDrawer: { gap: spacing.s, paddingTop: spacing.xs },
   row: { flexDirection: 'row', gap: spacing.s },
-  rowInline: { flexDirection: 'row', alignItems: 'center', gap: spacing.s },
+  rowInline: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.s },
   between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
   moduleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
-  rowTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  rowTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '700', flexShrink: 1 },
   chevron: { color: colors.navBlue, fontSize: 12.5, fontWeight: '700' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.borderSubtle },
   upcomingGrid: { flexDirection: 'row', gap: spacing.xs },

@@ -17,8 +17,8 @@ import { useMe } from '../../../core/auth/useMe';
 
 const MODULE_INFO: Record<string, { label: string; desc: string }> = {
   move: { label: 'Mobility (MoveSmart)', desc: '3D Navigation HUD, Live Radar, Places & Prefs' },
+  finance: { label: 'Finance Intelligence', desc: 'Zero-AA Digital Twin, Edge E2EE, Tax, Monte Carlo & AI CFO' },
   health: { label: 'Health', desc: 'Reports, wellness records & health insights' },
-  finance: { label: 'Finance', desc: 'Budgets, commute spend & financial overview' },
   work: { label: 'Work', desc: 'Tasks, morning briefs & schedule automation' },
 };
 
@@ -79,6 +79,8 @@ export default function ExploreScreen() {
   const openModule = (key: string) => {
     if (key === 'move') {
       nav.navigate('Mobility', { screen: 'Navigate' });
+    } else if (key === 'finance') {
+      nav.navigate('Finance');
     } else {
       nav.navigate('ModuleHub', { module: key });
     }
@@ -103,12 +105,13 @@ export default function ExploreScreen() {
           <View style={styles.list}>
             {me.isLoading && <Skeleton height={56} />}
             {me.isError && <Text style={{ color: colors.textSecondary }}>Modules are unavailable right now.</Text>}
-            {(me.data?.modules ?? ['move', 'health', 'finance', 'work']).map((m, i) => {
+            {(me.data?.modules ?? ['move', 'finance', 'health', 'work']).map((m, i) => {
               const info = MODULE_INFO[m];
+              const isLaunched = m === 'move' || m === 'finance';
               return (
                 <FadeIn key={m} index={i}>
-                  <Tappable onPress={() => openModule(m)} accessibilityLabel={`Open ${m}`}>
-                    <Card variant={m === 'move' ? 'featured' : 'default'} style={styles.row}>
+                  <Tappable onPress={() => openModule(m)} accessibilityLabel={`${isLaunched ? 'Launch' : 'Open'} ${m}`}>
+                    <Card variant={isLaunched ? 'featured' : 'default'} style={styles.row}>
                       <View
                         style={[
                           styles.badge,
@@ -125,8 +128,14 @@ export default function ExploreScreen() {
                           </Text>
                         ) : null}
                       </View>
-                      <View style={styles.driveMiniBtn}>
-                        <Text style={styles.driveMiniText}>{m === 'move' ? 'Launch →' : 'Open →'}</Text>
+                      <View
+                        style={[
+                          styles.driveMiniBtn,
+                          m === 'finance' ? { backgroundColor: moduleColors.finance } : null,
+                        ]}>
+                        <Text style={[styles.driveMiniText, m === 'finance' ? { color: '#060B10' } : null]}>
+                          {isLaunched ? 'Launch →' : 'Open →'}
+                        </Text>
                       </View>
                     </Card>
                   </Tappable>

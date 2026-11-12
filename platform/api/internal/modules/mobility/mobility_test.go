@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"github.com/nexora/platform/api/internal/platform/cache"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -647,5 +649,82 @@ func TestTwelvePillarDigitalTwinSafetyMemoryAndPrivacy(t *testing.T) {
 	r.ServeHTTP(recBrief, httptest.NewRequest(http.MethodGet, "/move/assistant/proactive-brief?lat=17.445&lon=78.381", nil))
 	if recBrief.Code != http.StatusOK || !bytes.Contains(recBrief.Body.Bytes(), []byte("privacy_shield")) {
 		t.Fatalf("GET /move/assistant/proactive-brief failed: %d %s", recBrief.Code, recBrief.Body.String())
+	}
+}
+
+func TestRedisSpatialRadarAndHotTripCache(t *testing.T) {
+	r := chi.NewRouter()
+	repo := &fakeRepo{trips: map[string]*Trip{}}
+	svc := NewService(repo, nil, nil, slog.Default()).WithCache(cache.NewInMemory())
+	Mount(r, svc)
+
+	uid := uuid.NewString()
+	startReq := httptest.NewRequest(http.MethodPost, "/move/trips", bytes.NewBufferString(
+		`{"user_id":"`+uid+`","primary_mode":"car","origin":{"latitude":12.9716,"longitude":77.5946},"destination":{"latitude":12.9900,"longitude":77.6100}}`,
+	))
+	recStart := httptest.NewRecorder()
+	r.ServeHTTP(recStart, startReq)
+	if recStart.Code != http.StatusCreated {
+		t.Fatalf("start trip failed: %d %s", recStart.Code, recStart.Body.String())
+	}
+	var started struct {
+		ID string `json:"trip_id"`
+	}
+	_ = json.Unmarshal(recStart.Body.Bytes(), &started)
+
+	// Upload location batch -> indexes live position into spatial set
+	batchReq := httptest.NewRequest(http.MethodPost, "/move/trips/"+started.ID+"/locations:batch", bytes.NewBufferString(
+		`{"samples":[{"latitude":12.9750,"longitude":77.5970,"speed_mps":11.5,"heading_degrees":45}]}`,
+	))
+	recBatch := httptest.NewRecorder()
+	r.ServeHTTP(recBatch, batchReq)
+	var batchOut struct {
+		TripID         string `json:"trip_id"`
+		Accepted       int    `json:"accepted"`
+		SpatialIndexed bool   `json:"spatial_indexed"`
+	}
+	if recBatch.Code != http.StatusAccepted || json.Unmarshal(recBatch.Body.Bytes(), &batchOut) != nil || !batchOut.SpatialIndexed {
+		t.Fatalf("batch failed or emitted invalid JSON: %d %s", recBatch.Code, recBatch.Body.String())
+	}
+
+	// Report hazard -> indexes into active hazard spatial set
+	hzReq := httptest.NewRequest(http.MethodPost, "/move/hazards/report", bytes.NewBufferString(
+		`{"latitude":12.9760,"longitude":77.5980,"hint_category":"waterlogging"}`,
+	))
+	recHz := httptest.NewRecorder()
+	r.ServeHTTP(recHz, hzReq)
+	if recHz.Code != http.StatusCreated {
+		t.Fatalf("report hazard failed: %d %s", recHz.Code, recHz.Body.String())
+	}
+
+	// Query Redis Spatial Radar nearby
+	recRadar := httptest.NewRecorder()
+	r.ServeHTTP(recRadar, httptest.NewRequest(http.MethodGet, "/move/spatial/nearby?lat=12.9755&lon=77.5975&radius_m=2000", nil))
+	if recRadar.Code != http.StatusOK {
+		t.Fatalf("spatial radar failed: %d %s", recRadar.Code, recRadar.Body.String())
+	}
+	var radar struct {
+		SpatialSource     string `json:"spatial_source"`
+		ActiveNearbyTrips int    `json:"active_nearby_trips"`
+		NearbyHazardCoord []any  `json:"nearby_hazard_coords"`
+	}
+	if err := json.Unmarshal(recRadar.Body.Bytes(), &radar); err != nil {
+		t.Fatal(err)
+	}
+	if radar.SpatialSource != "redis-geo" || radar.ActiveNearbyTrips != 1 || len(radar.NearbyHazardCoord) != 1 {
+		t.Fatalf("expected 1 active trip and 1 hazard in spatial radar, got %+v", radar)
+	}
+
+	// Complete trip -> removes active trip from live spatial index
+	recDone := httptest.NewRecorder()
+	r.ServeHTTP(recDone, httptest.NewRequest(http.MethodPost, "/move/trips/"+started.ID+"/complete", nil))
+	if recDone.Code != http.StatusOK {
+		t.Fatalf("complete trip failed: %d", recDone.Code)
+	}
+	recRadarAfter := httptest.NewRecorder()
+	r.ServeHTTP(recRadarAfter, httptest.NewRequest(http.MethodGet, "/move/spatial/nearby?lat=12.9755&lon=77.5975&radius_m=2000", nil))
+	_ = json.Unmarshal(recRadarAfter.Body.Bytes(), &radar)
+	if radar.ActiveNearbyTrips != 0 {
+		t.Fatalf("expected 0 active trips in spatial radar after completion, got %d", radar.ActiveNearbyTrips)
 	}
 }

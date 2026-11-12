@@ -14,8 +14,18 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { colors, radii } from '../../app/theme/tokens';
-import { GeoPoint, NearbyPOI, moveApi } from '../../core/api/move';
+import {
+  GeoPoint,
+  NearbyPOI,
+  SpatialRadarSnapshot,
+  TracePoint,
+  computeBearingDeg,
+  haversineDistM,
+  moveApi,
+} from '../../core/api/move';
 import { useNavPreferences } from '../../core/state/useNavPreferences';
+
+export type QuickReportHazardKind = 'pothole' | 'waterlogging' | 'blocked_lane' | 'animal_crossing';
 
 export type MapManeuver = {
   distanceLabel: string;
@@ -33,6 +43,7 @@ export type MapHazardItem = {
   hazard_type: string;
   severity: string;
   confidence?: number;
+  location?: GeoPoint;
 };
 
 export type MapTrafficItem = {
@@ -56,12 +67,74 @@ function projectToCanvasPct(
   const cosLat = Math.cos((center.latitude * Math.PI) / 180) || 1;
   const dxMeters = (target.longitude - center.longitude) * 111_320 * cosLat;
   const dyMeters = (target.latitude - center.latitude) * 110_540;
-  const normX = Math.max(-0.38, Math.min(0.38, (dxMeters / scaleRadiusM) * 0.36));
-  const normY = Math.max(-0.36, Math.min(0.36, (dyMeters / scaleRadiusM) * 0.36));
+  const normX = Math.max(-0.42, Math.min(0.42, (dxMeters / scaleRadiusM) * 0.36));
+  const normY = Math.max(-0.38, Math.min(0.38, (dyMeters / scaleRadiusM) * 0.36));
   return {
     leftPct: Math.round((50 + normX * 100) * 10) / 10,
     topPct: Math.round((54 - normY * 100) * 10) / 10,
   };
+}
+
+function compassDirection(deg: number): string {
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return dirs[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+}
+
+function renderProjectedSegments(
+  pts: Array<{ x: number; y: number }>,
+  color: string,
+  thickness: number,
+  keyPrefix: string,
+  glowColor?: string,
+) {
+  if (pts.length < 2) return null;
+  const nodes: React.ReactNode[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 2) continue;
+    const angleRad = Math.atan2(dy, dx);
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    if (glowColor) {
+      nodes.push(
+        <View
+          key={`${keyPrefix}-glow-${i}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: mx - len / 2,
+            top: my - (thickness + 7) / 2,
+            width: len,
+            height: thickness + 7,
+            borderRadius: (thickness + 7) / 2,
+            backgroundColor: glowColor,
+            transform: [{ rotate: `${angleRad}rad` }],
+          }}
+        />,
+      );
+    }
+    nodes.push(
+      <View
+        key={`${keyPrefix}-seg-${i}`}
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: mx - len / 2,
+          top: my - thickness / 2,
+          width: len,
+          height: thickness,
+          borderRadius: thickness / 2,
+          backgroundColor: color,
+          transform: [{ rotate: `${angleRad}rad` }],
+        }}
+      />,
+    );
+  }
+  return nodes;
 }
 
 /**
@@ -76,6 +149,16 @@ export function NavMapCanvas({
   hazards = [],
   trafficSegments = [],
   transitStops = [],
+  tracePoints = [],
+  liveHeadingDeg,
+  accuracyM,
+  tracedDistanceM = 0,
+  tracingActive = false,
+  onToggleTracing,
+  onClearTrace,
+  onQuickReportHazard,
+  reportBusy = false,
+  spatialRadar,
   maneuver,
   roadLabel,
   speedLimit = 50,
@@ -99,6 +182,16 @@ export function NavMapCanvas({
   hazards?: MapHazardItem[];
   trafficSegments?: MapTrafficItem[];
   transitStops?: MapTransitStop[];
+  tracePoints?: TracePoint[];
+  liveHeadingDeg?: number;
+  accuracyM?: number;
+  tracedDistanceM?: number;
+  tracingActive?: boolean;
+  onToggleTracing?: () => void;
+  onClearTrace?: () => void;
+  onQuickReportHazard?: (kind: QuickReportHazardKind) => void;
+  reportBusy?: boolean;
+  spatialRadar?: SpatialRadarSnapshot;
   maneuver?: MapManeuver | null;
   roadLabel?: string;
   speedLimit?: number;
@@ -120,9 +213,12 @@ export function NavMapCanvas({
   const prefs = useNavPreferences();
   const [zoom, setZoom] = useState(1);
   const [headingNorthUp, setHeadingNorthUp] = useState(false);
+  const [followUser, setFollowUser] = useState(true);
   const [showEV, setShowEV] = useState(true);
   const [showSpeedCams, setShowSpeedCams] = useState(true);
   const [showFuel, setShowFuel] = useState(true);
+  const [showTrace, setShowTrace] = useState(true);
+  const [mapSize, setMapSize] = useState<{ w: number; h: number }>({ w: 360, h: 320 });
   const [gpsHubOpen, setGpsHubOpen] = useState(false);
   const [gpsToast, setGpsToast] = useState<string | null>(null);
   const [internalFullScreen, setInternalFullScreen] = useState(false);
@@ -170,19 +266,34 @@ export function NavMapCanvas({
     PanResponder.create({
       onMoveShouldSetPanResponder: (_evt, gesture) =>
         Math.abs(gesture.dx) > 6 || Math.abs(gesture.dy) > 6,
+      onPanResponderGrant: () => {
+        setFollowUser(false);
+      },
       onPanResponderMove: (_evt, gesture) => {
-        const nextX = Math.max(-110, Math.min(110, lastOffset.current.x + gesture.dx));
-        const nextY = Math.max(-90, Math.min(90, lastOffset.current.y + gesture.dy));
+        setFollowUser(false);
+        const nextX = Math.max(-140, Math.min(140, lastOffset.current.x + gesture.dx));
+        const nextY = Math.max(-120, Math.min(120, lastOffset.current.y + gesture.dy));
         pan.setValue({ x: nextX, y: nextY });
       },
       onPanResponderRelease: (_evt, gesture) => {
         lastOffset.current = {
-          x: Math.max(-110, Math.min(110, lastOffset.current.x + gesture.dx)),
-          y: Math.max(-90, Math.min(90, lastOffset.current.y + gesture.dy)),
+          x: Math.max(-140, Math.min(140, lastOffset.current.x + gesture.dx)),
+          y: Math.max(-120, Math.min(120, lastOffset.current.y + gesture.dy)),
         };
       },
     }),
   ).current;
+
+  useEffect(() => {
+    if (!followUser || !origin) return;
+    lastOffset.current = { x: 0, y: 0 };
+    Animated.spring(pan, {
+      toValue: { x: 0, y: 0 },
+      useNativeDriver: true,
+      friction: 7,
+      tension: 65,
+    }).start();
+  }, [followUser, origin?.latitude, origin?.longitude, pan]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -203,6 +314,7 @@ export function NavMapCanvas({
   };
 
   const handleRecenterPress = () => {
+    setFollowUser(true);
     lastOffset.current = { x: 0, y: 0 };
     Animated.spring(pan, {
       toValue: { x: 0, y: 0 },
@@ -216,7 +328,7 @@ export function NavMapCanvas({
     const coordStr = origin
       ? `${origin.latitude.toFixed(4)}°N, ${origin.longitude.toFixed(4)}°E`
       : 'Waiting for GPS';
-    showToastMessage(`⌖ GPS Centered · ${coordStr}`);
+    showToastMessage(`⌖ Follow Lock ON · ${coordStr}`);
   };
 
   const openExternalMap = async (target: 'apple' | 'google', customDest?: GeoPoint) => {
@@ -275,9 +387,75 @@ export function NavMapCanvas({
       (p.kind === 'fuel' && showFuel),
   );
 
+  // Dynamically fit map projection radius around origin + route targets + live breadcrumb trace
+  const fitRadiusM = useMemo(() => {
+    if (!origin) return 3200;
+    let maxDist = 1400;
+    const consider = (pt?: GeoPoint | null) => {
+      if (!pt) return;
+      const d = haversineDistM(origin, pt);
+      if (d > maxDist && d < 35_000) maxDist = d;
+    };
+    consider(destination);
+    stops.forEach(consider);
+    tracePoints.forEach(consider);
+    return Math.max(900, Math.min(28_000, Math.round(maxDist * 1.4)));
+  }, [origin, destination, stops, tracePoints]);
+
+  const effectiveHeading = useMemo(() => {
+    if (typeof liveHeadingDeg === 'number' && !Number.isNaN(liveHeadingDeg)) {
+      return Math.round(((liveHeadingDeg % 360) + 360) % 360);
+    }
+    if (origin && (stops[0] || destination)) {
+      return computeBearingDeg(origin, stops[0] ?? destination!);
+    }
+    return 0;
+  }, [liveHeadingDeg, origin, stops, destination]);
+
+  const displaySpeedKmph = typeof liveSpeedKmph === 'number' ? liveSpeedKmph : avgSpeed;
+  const speedExceeded = typeof displaySpeedKmph === 'number' && displaySpeedKmph > speedLimit;
+
   const renderMapStage = (fullScreenMode: boolean) => {
     const safeTopPad = fullScreenMode ? Math.max(10, insets.top + 4) : 10;
     const safeBottomPad = fullScreenMode ? (fullScreenOverlay ? 14 : Math.max(14, insets.bottom + 8)) : 10;
+
+    const toPx = (pt: GeoPoint) => {
+      if (!origin) return { x: mapSize.w * 0.5, y: mapSize.h * 0.54, leftPct: 50, topPct: 54 };
+      const pct = projectToCanvasPct(origin, pt, fitRadiusM);
+      return {
+        x: (pct.leftPct / 100) * mapSize.w,
+        y: (pct.topPct / 100) * mapSize.h,
+        ...pct,
+      };
+    };
+
+    const routeWaypoints: GeoPoint[] = [];
+    if (origin && destination) {
+      routeWaypoints.push(origin, ...stops, destination);
+    }
+    const routePx = routeWaypoints.map(toPx);
+    const destPx = destination && origin ? toPx(destination) : null;
+
+    const tracePx = showTrace && origin ? tracePoints.map(toPx) : [];
+    if (showTrace && origin && tracePx.length >= 1) {
+      const lastTrace = tracePoints[tracePoints.length - 1];
+      if (haversineDistM(lastTrace, origin) >= 2) {
+        tracePx.push(toPx(origin));
+      }
+    }
+
+    // Fallback diagonal position when trip preview has progress without multi-point trace
+    const puckPct =
+      progress > 0 && destination && origin
+        ? {
+            leftPct:
+              50 +
+              ((toPx(destination).leftPct - 50) * Math.min(1, Math.max(0, progress))),
+            topPct:
+              54 +
+              ((toPx(destination).topPct - 54) * Math.min(1, Math.max(0, progress))),
+          }
+        : { leftPct: 50, topPct: 54 };
 
     return (
       <View
@@ -290,6 +468,14 @@ export function NavMapCanvas({
         <Pressable
           {...panResponder.panHandlers}
           style={styles.mapStage}
+          onLayout={e => {
+            const { width, height: h } = e.nativeEvent.layout;
+            if (width > 20 && h > 20) {
+              setMapSize(cur =>
+                Math.abs(cur.w - width) > 4 || Math.abs(cur.h - h) > 4 ? { w: width, h } : cur,
+              );
+            }
+          }}
           onPress={() => {
             setSelectedPin(null);
             if (gpsHubOpen) setGpsHubOpen(false);
@@ -335,30 +521,57 @@ export function NavMapCanvas({
               </View>
             ) : null}
 
-            {/* Active route vector when destination exists */}
+            {/* Projected Route Polyline (Origin -> Stops -> Destination) */}
             {destination && (
               <View style={styles.routeOverlay}>
-                <View style={styles.routeLegGlow} />
-                <View style={styles.routeLegMain} />
-                {prefs.showTraffic && (
-                  <View
-                    style={[
-                      styles.routeTrafficSegment,
-                      { backgroundColor: hasCongestion ? colors.statusDanger : colors.statusSuccess },
-                    ]}
-                  />
+                {routePx.length >= 2 ? (
+                  <>
+                    {renderProjectedSegments(
+                      routePx,
+                      prefs.showTraffic && hasCongestion ? colors.statusWarning : colors.routeCyan,
+                      6,
+                      'route',
+                      'rgba(42, 224, 196, 0.25)',
+                    )}
+                    {prefs.showTraffic && routePx.length >= 2 && (
+                      <View
+                        style={[
+                          styles.routeCalloutChip,
+                          {
+                            left: Math.max(16, Math.min(mapSize.w - 140, (routePx[0].x + routePx[routePx.length - 1].x) / 2 - 48)),
+                            top: Math.max(24, Math.min(mapSize.h - 60, (routePx[0].y + routePx[routePx.length - 1].y) / 2 - 14)),
+                          },
+                        ]}>
+                        <Text style={styles.routeCalloutText}>
+                          ⚡ {hasCongestion ? 'Heavy Segment' : 'Optimal Corridor'}
+                        </Text>
+                      </View>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.routeLegGlow} />
+                    <View style={styles.routeLegMain} />
+                    {prefs.showTraffic && (
+                      <View
+                        style={[
+                          styles.routeTrafficSegment,
+                          { backgroundColor: hasCongestion ? colors.statusDanger : colors.statusSuccess },
+                        ]}
+                      />
+                    )}
+                    <View style={styles.routeCalloutChip}>
+                      <Text style={styles.routeCalloutText}>
+                        ⚡ {hasCongestion ? 'Heavy Segment' : 'Optimal Corridor'}
+                      </Text>
+                    </View>
+                  </>
                 )}
-
-                <View style={styles.routeCalloutChip}>
-                  <Text style={styles.routeCalloutText}>
-                    ⚡ {hasCongestion ? 'Heavy Segment' : 'Optimal Corridor'}
-                  </Text>
-                </View>
 
                 {/* Waypoints along route */}
                 {stops.map((st, idx) => {
                   const pos = origin
-                    ? projectToCanvasPct(origin, st)
+                    ? projectToCanvasPct(origin, st, fitRadiusM)
                     : { leftPct: 46 + ((idx + 1) * 8) % 24, topPct: 54 - ((idx + 1) * 12) % 28 };
                   return (
                     <TouchableOpacity
@@ -380,7 +593,7 @@ export function NavMapCanvas({
                   );
                 })}
 
-                {/* Destination marker */}
+                {/* Projected Destination marker */}
                 <TouchableOpacity
                   onPress={() =>
                     setSelectedPin({
@@ -390,16 +603,78 @@ export function NavMapCanvas({
                       coords: destination,
                     })
                   }
-                  style={styles.destPin}>
+                  style={[
+                    styles.destPin,
+                    destPx
+                      ? {
+                          left: `${destPx.leftPct}%` as any,
+                          top: `${destPx.topPct}%` as any,
+                          right: undefined,
+                          marginLeft: -14,
+                          marginTop: -14,
+                        }
+                      : undefined,
+                  ]}>
                   <Text style={styles.destPinText}>⚑</Text>
                 </TouchableOpacity>
               </View>
             )}
 
+            {/* Live GPS Breadcrumb Trace Polyline */}
+            {showTrace && tracePx.length >= 2 && (
+              <View style={styles.routeOverlay} pointerEvents="none">
+                {renderProjectedSegments(
+                  tracePx,
+                  '#10B981',
+                  4,
+                  'trace',
+                  'rgba(16, 185, 129, 0.28)',
+                )}
+                {tracePx
+                  .filter((_, idx) => idx === 0 || idx % Math.max(1, Math.floor(tracePx.length / 8)) === 0)
+                  .map((pt, idx) => (
+                    <View
+                      key={`trace-dot-${idx}`}
+                      style={[
+                        styles.traceDot,
+                        idx === 0 && styles.traceStartDot,
+                        { left: pt.x - 4, top: pt.y - 4 },
+                      ]}
+                    />
+                  ))}
+              </View>
+            )}
+
+            {/* Redis Spatial Live Nearby Active Trips Radar Dots */}
+            {fullScreenMode &&
+              prefs.showTraffic &&
+              origin &&
+              spatialRadar?.nearby_trip_probes?.slice(0, 10).map(probe => {
+                const pos = projectToCanvasPct(
+                  origin,
+                  { latitude: probe.latitude, longitude: probe.longitude },
+                  fitRadiusM,
+                );
+                return (
+                  <View
+                    key={`probe-${probe.member}`}
+                    pointerEvents="none"
+                    style={[
+                      styles.spatialProbeDot,
+                      { left: `${pos.leftPct}%` as any, top: `${pos.topPct}%` as any },
+                    ]}
+                  />
+                );
+              })}
+
             {/* Real OpenStreetMap Petrol Pumps, EV Chargers & Speed Cameras */}
             {origin &&
               filteredPois.slice(0, 12).map(poi => {
-                const pos = projectToCanvasPct(origin, { latitude: poi.latitude, longitude: poi.longitude });
+                const pos = projectToCanvasPct(
+                  origin,
+                  { latitude: poi.latitude, longitude: poi.longitude },
+                  fitRadiusM,
+                );
                 const icon = poi.kind === 'ev' ? '⚡' : poi.kind === 'fuel' ? '⛽' : '📷';
                 const badgeColor =
                   poi.kind === 'ev' ? '#10B981' : poi.kind === 'fuel' ? '#38BDF8' : '#F59E0B';
@@ -437,16 +712,19 @@ export function NavMapCanvas({
                 );
               })}
 
-            {/* Interactive hazard pins */}
+            {/* Interactive hazard pins (projected if location exists) */}
             {prefs.showIncidents &&
-              hazards.slice(0, 4).map((h, i) => {
-                const positions = [
-                  { top: '34%', left: '32%' },
-                  { top: '24%', left: '62%' },
-                  { top: '62%', left: '40%' },
-                  { top: '42%', left: '72%' },
+              hazards.slice(0, 6).map((h, i) => {
+                const fallbackPositions = [
+                  { leftPct: 32, topPct: 34 },
+                  { leftPct: 62, topPct: 24 },
+                  { leftPct: 40, topPct: 62 },
+                  { leftPct: 72, topPct: 42 },
                 ];
-                const pos = positions[i % positions.length];
+                const pos =
+                  origin && h.location
+                    ? projectToCanvasPct(origin, h.location, fitRadiusM)
+                    : fallbackPositions[i % fallbackPositions.length];
                 const isHigh = h.severity === 'high' || h.severity === 'critical';
                 return (
                   <TouchableOpacity
@@ -458,13 +736,14 @@ export function NavMapCanvas({
                           h.confidence ? ` · ${Math.round(h.confidence * 100)}% verified` : ''
                         }`,
                         tone: isHigh ? colors.statusDanger : colors.statusWarning,
+                        coords: h.location,
                       })
                     }
                     style={[
                       styles.hazardPin,
                       {
-                        top: pos.top as any,
-                        left: pos.left as any,
+                        top: `${pos.topPct}%` as any,
+                        left: `${pos.leftPct}%` as any,
                         borderColor: isHigh ? colors.statusDanger : colors.statusWarning,
                       },
                     ]}>
@@ -506,7 +785,7 @@ export function NavMapCanvas({
               );
             })}
 
-            {/* Tappable Live GPS 3D Chevron Puck */}
+            {/* Tappable Live GPS 3D Directional Chevron Puck */}
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => {
@@ -515,9 +794,11 @@ export function NavMapCanvas({
               }}
               style={[
                 styles.chevronAnchor,
-                progress > 0 && {
-                  left: `${Math.round(46 + Math.min(1, Math.max(0, progress)) * 22)}%` as any,
-                  top: `${Math.round(60 - Math.min(1, Math.max(0, progress)) * 36)}%` as any,
+                {
+                  left: `${puckPct.leftPct}%` as any,
+                  top: `${puckPct.topPct}%` as any,
+                  marginLeft: -22,
+                  marginTop: -22,
                 },
               ]}>
               <Animated.View
@@ -531,7 +812,11 @@ export function NavMapCanvas({
                   },
                 ]}
               />
-              <View style={styles.chevronCore}>
+              <View
+                style={[
+                  styles.chevronCore,
+                  { transform: [{ rotate: `${effectiveHeading}deg` }] },
+                ]}>
                 <Text style={styles.chevronArrow}>▲</Text>
               </View>
             </TouchableOpacity>
@@ -541,7 +826,7 @@ export function NavMapCanvas({
         {/* Top HUD Overlay: Turn-by-Turn Maneuver Banner OR Smart Layer Bar + Right Controls */}
         <View style={[styles.topHud, { top: safeTopPad }]} pointerEvents="box-none">
           {maneuver ? (
-            <View style={{ flex: 1, maxWidth: '80%', gap: 4 }}>
+            <View style={{ flex: 1, maxWidth: '82%', gap: 5 }}>
               <View style={styles.maneuverBanner}>
                 <View style={styles.maneuverTop}>
                   <View style={styles.turnIconBox}>
@@ -589,44 +874,140 @@ export function NavMapCanvas({
                   </Text>
                 </View>
               ) : null}
+
+              {/* Fullscreen Live Telemetry & Layer Bar during active turn-by-turn */}
+              {fullScreenMode && (
+                <>
+                  <View style={styles.telemetryStripRow}>
+                    <View style={styles.telemetryChip}>
+                      <Text style={styles.telemetryText}>
+                        🧭 {compassDirection(effectiveHeading)} {effectiveHeading}°
+                      </Text>
+                    </View>
+                    {typeof accuracyM === 'number' && (
+                      <View style={styles.telemetryChip}>
+                        <Text style={styles.telemetryText}>📡 GPS ±{accuracyM}m</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      onPress={onToggleTracing}
+                      disabled={!onToggleTracing}
+                      style={[styles.telemetryChip, tracingActive && styles.traceRecChip]}>
+                      <Text style={[styles.telemetryText, tracingActive && { color: '#6EE7B7' }]}>
+                        {tracingActive ? '● TRACE' : '⏸ TRACE'} · {(tracedDistanceM / 1000).toFixed(2)} km ({tracePoints.length})
+                      </Text>
+                    </TouchableOpacity>
+                    {tracePoints.length > 0 && onClearTrace && (
+                      <TouchableOpacity onPress={onClearTrace} style={styles.telemetryChip}>
+                        <Text style={[styles.telemetryText, { color: colors.textMuted }]}>↺ Clear</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={styles.alertPillsRow}>
+                    <TouchableOpacity
+                      onPress={() => setShowTrace(v => !v)}
+                      style={[styles.glassPill, showTrace && styles.activeLayerPill]}>
+                      <Text style={styles.glassPillText}>〰 Trail</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowEV(v => !v)}
+                      style={[styles.glassPill, showEV && styles.activeLayerPill]}>
+                      <Text style={styles.glassPillText}>⚡ EV</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowFuel(v => !v)}
+                      style={[styles.glassPill, showFuel && styles.activeLayerPill]}>
+                      <Text style={styles.glassPillText}>⛽ Fuel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowSpeedCams(v => !v)}
+                      style={[styles.glassPill, showSpeedCams && styles.activeLayerPill]}>
+                      <Text style={styles.glassPillText}>📷 Cams</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={prefs.toggleTraffic}
+                      style={[styles.glassPill, prefs.showTraffic && styles.activeLayerPill]}>
+                      <Text style={styles.glassPillText}>🚦 Traffic</Text>
+                    </TouchableOpacity>
+                    {spatialRadar && spatialRadar.active_nearby_trips > 0 && (
+                      <View style={styles.telemetryChip}>
+                        <Text style={[styles.telemetryText, { color: colors.routeCyan }]}>
+                          🛰 {spatialRadar.active_nearby_trips} live probes
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </>
+              )}
             </View>
           ) : (
-            <View style={styles.alertPillsRow}>
-              <TouchableOpacity
-                onPress={() => setShowEV(v => !v)}
-                style={[styles.glassPill, showEV && styles.activeLayerPill]}>
-                <Text style={styles.glassPillText}>
-                  ⚡ EV ({realPois.filter(p => p.kind === 'ev').length})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setShowFuel(v => !v)}
-                style={[styles.glassPill, showFuel && styles.activeLayerPill]}>
-                <Text style={styles.glassPillText}>
-                  ⛽ Fuel ({realPois.filter(p => p.kind === 'fuel').length})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setShowSpeedCams(v => !v)}
-                style={[styles.glassPill, showSpeedCams && styles.activeLayerPill]}>
-                <Text style={styles.glassPillText}>📷 Cams</Text>
-              </TouchableOpacity>
-              {hazards.length > 0 && (
+            <View style={{ flex: 1, gap: 5 }}>
+              <View style={styles.alertPillsRow}>
                 <TouchableOpacity
-                  onPress={() =>
-                    setSelectedPin({
-                      title: `${hazards.length} Nearby Hazard${hazards.length > 1 ? 's' : ''}`,
-                      subtitle: hazards[0].hazard_type.replace(/_/g, ' '),
-                      tone: colors.statusWarning,
-                    })
-                  }
-                  style={styles.amberPill}>
-                  <Text style={styles.alertPillText}>⚠ {hazards.length}</Text>
+                  onPress={() => setShowEV(v => !v)}
+                  style={[styles.glassPill, showEV && styles.activeLayerPill]}>
+                  <Text style={styles.glassPillText}>
+                    ⚡ EV ({realPois.filter(p => p.kind === 'ev').length})
+                  </Text>
                 </TouchableOpacity>
-              )}
-              {typeof delayMinutes === 'number' && delayMinutes > 0 && (
-                <View style={styles.dangerPill}>
-                  <Text style={styles.dangerPillText}>+{delayMinutes} min</Text>
+                <TouchableOpacity
+                  onPress={() => setShowFuel(v => !v)}
+                  style={[styles.glassPill, showFuel && styles.activeLayerPill]}>
+                  <Text style={styles.glassPillText}>
+                    ⛽ Fuel ({realPois.filter(p => p.kind === 'fuel').length})
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShowSpeedCams(v => !v)}
+                  style={[styles.glassPill, showSpeedCams && styles.activeLayerPill]}>
+                  <Text style={styles.glassPillText}>📷 Cams</Text>
+                </TouchableOpacity>
+                {fullScreenMode && (
+                  <TouchableOpacity
+                    onPress={() => setShowTrace(v => !v)}
+                    style={[styles.glassPill, showTrace && styles.activeLayerPill]}>
+                    <Text style={styles.glassPillText}>〰 Trail ({tracePoints.length})</Text>
+                  </TouchableOpacity>
+                )}
+                {hazards.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() =>
+                      setSelectedPin({
+                        title: `${hazards.length} Nearby Hazard${hazards.length > 1 ? 's' : ''}`,
+                        subtitle: hazards[0].hazard_type.replace(/_/g, ' '),
+                        tone: colors.statusWarning,
+                      })
+                    }
+                    style={styles.amberPill}>
+                    <Text style={styles.alertPillText}>⚠ {hazards.length}</Text>
+                  </TouchableOpacity>
+                )}
+                {typeof delayMinutes === 'number' && delayMinutes > 0 && (
+                  <View style={styles.dangerPill}>
+                    <Text style={styles.dangerPillText}>+{delayMinutes} min</Text>
+                  </View>
+                )}
+              </View>
+              {fullScreenMode && (
+                <View style={styles.telemetryStripRow}>
+                  <View style={styles.telemetryChip}>
+                    <Text style={styles.telemetryText}>
+                      🧭 {compassDirection(effectiveHeading)} {effectiveHeading}°
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={onToggleTracing}
+                    disabled={!onToggleTracing}
+                    style={[styles.telemetryChip, tracingActive && styles.traceRecChip]}>
+                    <Text style={[styles.telemetryText, tracingActive && { color: '#6EE7B7' }]}>
+                      {tracingActive ? '● REC TRACE' : '⏸ TRACE'} · {(tracedDistanceM / 1000).toFixed(2)} km
+                    </Text>
+                  </TouchableOpacity>
+                  {tracePoints.length > 0 && onClearTrace && (
+                    <TouchableOpacity onPress={onClearTrace} style={styles.telemetryChip}>
+                      <Text style={[styles.telemetryText, { color: colors.textMuted }]}>↺ Clear</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
             </View>
@@ -843,6 +1224,31 @@ export function NavMapCanvas({
           </View>
         )}
 
+        {/* Fullscreen 1-Tap Field Incident & Road Memory Quick Bar */}
+        {fullScreenMode && onQuickReportHazard && !gpsHubOpen && !selectedPin && (
+          <View style={[styles.fsQuickReportRow, { bottom: safeBottomPad + 48 }]} pointerEvents="box-none">
+            {(
+              [
+                { kind: 'pothole', label: '⚠ Pothole' },
+                { kind: 'waterlogging', label: '🌊 Waterlog' },
+                { kind: 'animal_crossing', label: '🐾 Animal' },
+                { kind: 'blocked_lane', label: '🚧 Blocked' },
+              ] as Array<{ kind: QuickReportHazardKind; label: string }>
+            ).map(item => (
+              <TouchableOpacity
+                key={item.kind}
+                disabled={reportBusy}
+                onPress={() => {
+                  onQuickReportHazard(item.kind);
+                  showToastMessage(`Logged ${item.label} at current GPS`);
+                }}
+                style={styles.fsReportChip}>
+                <Text style={styles.fsReportText}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {/* Bottom HUD Pill */}
         <View style={[styles.bottomHud, { bottom: safeBottomPad }]} pointerEvents="box-none">
           <TouchableOpacity
@@ -853,9 +1259,11 @@ export function NavMapCanvas({
             <View style={styles.speedCircle}>
               <Text style={styles.speedNum}>{speedLimit}</Text>
             </View>
-            {(typeof liveSpeedKmph === 'number' || typeof avgSpeed === 'number') && (
-              <View style={styles.liveSpeedBox}>
-                <Text style={styles.liveSpeedVal}>{liveSpeedKmph ?? avgSpeed}</Text>
+            {typeof displaySpeedKmph === 'number' && (
+              <View style={[styles.liveSpeedBox, speedExceeded && styles.liveSpeedAlertBox]}>
+                <Text style={[styles.liveSpeedVal, speedExceeded && { color: '#FCA5A5' }]}>
+                  {displaySpeedKmph}
+                </Text>
                 <Text style={styles.liveSpeedUnit}>km/h</Text>
               </View>
             )}
@@ -864,16 +1272,20 @@ export function NavMapCanvas({
                 {roadLabel ?? destination?.name ?? gpsText}
               </Text>
               <Text style={styles.gpsHintSub} numberOfLines={1}>
-                Tap for OpenStreetMap Fuel/EV ({realPois.length}) · External Maps ▴
+                {fullScreenMode
+                  ? `OSM POIs (${realPois.length}) · Trace ${tracePoints.length} pts · Pitstops ▴`
+                  : `Tap for OpenStreetMap Fuel/EV (${realPois.length}) · External Maps ▴`}
               </Text>
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={handleRecenterPress}
-            style={styles.recenterBtn}
-            accessibilityLabel="Recenter GPS">
-            <Text style={styles.recenterText}>⌖</Text>
+            style={[styles.recenterBtn, !followUser && styles.recenterDetachedBtn]}
+            accessibilityLabel={followUser ? 'GPS Following User' : 'Re-center on GPS'}>
+            <Text style={[styles.recenterText, !followUser && { color: '#FDE68A', fontSize: 12 }]}>
+              {followUser ? '⌖' : '⌖ Fit'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1388,8 +1800,9 @@ const styles = StyleSheet.create({
   roadName: { color: colors.textPrimary, fontSize: 12, fontWeight: '800' },
   gpsHintSub: { color: colors.routeCyan, fontSize: 9.5, fontWeight: '700', marginTop: 1 },
   recenterBtn: {
-    width: 38,
+    minWidth: 38,
     height: 38,
+    paddingHorizontal: 8,
     borderRadius: 19,
     backgroundColor: colors.glassSurface,
     borderWidth: 1,
@@ -1397,5 +1810,82 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  recenterDetachedBtn: {
+    borderColor: '#F59E0B',
+    backgroundColor: 'rgba(245, 158, 11, 0.18)',
+  },
   recenterText: { color: colors.routeCyan, fontSize: 18, fontWeight: '800' },
+  traceDot: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#34D399',
+    borderWidth: 1.5,
+    borderColor: '#03120B',
+  },
+  traceStartDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#10B981',
+  },
+  spatialProbeDot: {
+    position: 'absolute',
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: colors.routeCyan,
+    borderWidth: 1.5,
+    borderColor: '#03121E',
+    opacity: 0.88,
+  },
+  telemetryStripRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  telemetryChip: {
+    backgroundColor: 'rgba(10, 18, 28, 0.88)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+  },
+  traceRecChip: {
+    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    borderColor: '#10B981',
+  },
+  telemetryText: {
+    color: colors.textPrimary,
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  fsQuickReportRow: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  fsReportChip: {
+    backgroundColor: 'rgba(14, 22, 34, 0.92)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+  },
+  fsReportText: {
+    color: '#FDE68A',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  liveSpeedAlertBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    borderColor: colors.statusDanger,
+  },
 });

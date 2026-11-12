@@ -29,7 +29,8 @@ type DBTX interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// EnqueueOutbox writes an event into platform.event_outbox within the caller's transaction.
+// EnqueueOutbox writes an event into platform.event_outbox within the caller's transaction
+// and signals the local OutboxRelay to flush immediately without waiting for the polling interval.
 func EnqueueOutbox(ctx context.Context, db DBTX, eventType, aggregateType, aggregateID, partitionKey string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -43,7 +44,18 @@ func EnqueueOutbox(ctx context.Context, db DBTX, eventType, aggregateType, aggre
 	if err != nil {
 		return fmt.Errorf("outbox insert %s: %w", eventType, err)
 	}
+	NotifyOutbox()
 	return nil
+}
+
+var defaultNotifyCh = make(chan struct{}, 64)
+
+// NotifyOutbox wakes the running OutboxRelay immediately (<5ms) when new events arrive.
+func NotifyOutbox() {
+	select {
+	case defaultNotifyCh <- struct{}{}:
+	default:
+	}
 }
 
 // OutboxRelay drains unpublished rows from platform.event_outbox and publishes them to AWS SNS and nexora-ml.
@@ -80,6 +92,8 @@ func (r *OutboxRelay) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
+			case <-defaultNotifyCh:
+				r.FlushBatch(ctx)
 			case <-ticker.C:
 				r.FlushBatch(ctx)
 			}

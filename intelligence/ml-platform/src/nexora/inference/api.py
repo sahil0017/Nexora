@@ -15,10 +15,11 @@ from contextlib import asynccontextmanager
 import time
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from nexora.assistant.mobility_agent import MobilityAIAssistant
 from nexora.events.sqs_worker import OnlineIntelligenceState, run_sqs_consumer_loop
+from nexora.finance.engine import FinanceIntelligenceNetwork
 from nexora.geospatial.h3_grid import clean_trajectory, discover_hotspots
 from nexora.models.city_digital_twin import CityMovementDigitalTwin, RoadMemoryNetwork
 from nexora.models.demand_forecaster import MobilityDemandForecaster
@@ -37,6 +38,7 @@ privacy_aggregator = PrivacyPreservingCrowdAggregator(k_min=5, epsilon=0.5)
 eta_model = JourneyETAEngine(traffic_model)
 vision_model = RoadVisionInspector()
 assistant_model = MobilityAIAssistant()
+finance_network = FinanceIntelligenceNetwork()
 online_state = OnlineIntelligenceState(traffic=traffic_model, demand=demand_model)
 
 # Event-versioned 30s TTL cache for high-frequency spatial/traffic inference
@@ -320,8 +322,10 @@ def predict_demand(body: dict[str, Any]) -> dict[str, Any]:
 @app.post("/v1/vision/road-hazards")
 def detect_road_hazards(body: dict[str, Any]) -> dict[str, Any]:
     """Pillar 4: YOLO / RT-DETR / MobileNet road hazard detection from image or telemetry."""
-    lat = float(body.get("latitude", 17.385))
-    lon = float(body.get("longitude", 78.486))
+    if body.get("latitude") is None or body.get("longitude") is None:
+        raise HTTPException(status_code=400, detail="latitude and longitude are required")
+    lat = float(body["latitude"])
+    lon = float(body["longitude"])
     image_ref = body.get("image_ref") or body.get("image_url")
     hint_type = body.get("hint_type") or body.get("hint_category")
     result = vision_model.inspect(
@@ -550,4 +554,64 @@ def events_status() -> dict[str, Any]:
         "gps_buffer_size": len(online_state.gps_buffer),
         "active_hazards_count": len(online_state.active_hazards),
         "active_hotspots_count": len(online_state.current_hotspots()),
+        "finance_events_count": len(online_state.finance_events),
     }
+
+
+# =============================================================================
+# NEXORA FINANCE INTELLIGENCE NETWORK ENDPOINTS (/v1/finance/*)
+# =============================================================================
+
+
+@app.post("/v1/finance/nlp/parse-alert")
+def finance_parse_alert(body: dict[str, Any]) -> dict[str, Any]:
+    """Domain 2: Zero-AA real-time SMS / Notification / Vault Email / iOS Shortcut parser."""
+    return finance_network.parse_financial_alert(body)
+
+
+@app.post("/v1/finance/digital-twin")
+def finance_digital_twin(body: dict[str, Any]) -> dict[str, Any]:
+    """Domains 1 & 2: Compute Financial Digital Twin, Health Score & Backward Ledger Replay."""
+    return finance_network.compute_digital_twin(body)
+
+
+@app.post("/v1/finance/markets/analyze")
+def finance_markets_analyze(body: dict[str, Any]) -> dict[str, Any]:
+    """Domains 3, 4, 5, 6, 13: MF look-through overlap, Equity quant & Global/LRS intelligence."""
+    return finance_network.analyze_markets_and_overlap(body)
+
+
+@app.post("/v1/finance/tax/evaluate")
+def finance_tax_evaluate(body: dict[str, Any]) -> dict[str, Any]:
+    """Domain 7: Deterministic Indian Income Tax (Old vs New) + FIFO Capital Gains & Harvesting."""
+    return finance_network.evaluate_tax_and_ca(body)
+
+
+@app.post("/v1/finance/debt-business/optimize")
+def finance_debt_business_optimize(body: dict[str, Any]) -> dict[str, Any]:
+    """Domains 8, 9, 10: Debt Avalanche/Snowball/Prepay optimizer + Business Unit Economics."""
+    return finance_network.optimize_debt_and_business(body)
+
+
+@app.post("/v1/finance/simulate/what-if")
+def finance_simulate_what_if(body: dict[str, Any]) -> dict[str, Any]:
+    """Domains 11, 12 & §17.5: Portfolio VaR/Stress + Monte Carlo & What-If Decision Laboratory."""
+    return finance_network.run_simulation_and_risk(body)
+
+
+@app.post("/v1/finance/graph/propagate")
+def finance_graph_propagate(body: dict[str, Any]) -> dict[str, Any]:
+    """§17.1 & §17.4: Propagate macro/market event across Financial Knowledge Graph."""
+    return finance_network.propagate_knowledge_graph_event(body)
+
+
+@app.post("/v1/finance/radar/scan")
+def finance_radar_scan(body: dict[str, Any]) -> dict[str, Any]:
+    """§16 & §17.2: Cross-Engine Opportunity Radar scan."""
+    return finance_network.scan_opportunity_radar(body)
+
+
+@app.post("/v1/finance/cfo/reason")
+def finance_cfo_reason(body: dict[str, Any]) -> dict[str, Any]:
+    """Domain 15, §17.3 & §17.6: Multi-Agent AI CFO reasoning with Privacy Firewall & Evidence Bundle."""
+    return finance_network.reason_ai_cfo(body)

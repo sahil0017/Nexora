@@ -16,6 +16,7 @@ type Config struct {
 	AWSTableName         string
 	SNSEventsTopicARN    string
 	SQSIntelligenceQueue string
+	FinanceMasterKey     string
 }
 
 func Load() *Config {
@@ -31,6 +32,7 @@ func Load() *Config {
 		AWSTableName:         getenv("DDB_DOCS_TABLE", ""),
 		SNSEventsTopicARN:    getenv("SNS_EVENTS_TOPIC_ARN", ""),
 		SQSIntelligenceQueue: getenv("SQS_INTELLIGENCE_QUEUE_URL", ""),
+		FinanceMasterKey:     getenv("FINANCE_MASTER_KEY", ""),
 	}
 }
 

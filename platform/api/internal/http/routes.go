@@ -9,6 +9,7 @@ import (
 
 	"github.com/nexora/platform/api/internal/config"
 	"github.com/nexora/platform/api/internal/handlers"
+	"github.com/nexora/platform/api/internal/modules/finance"
 	"github.com/nexora/platform/api/internal/modules/mobility"
 	"github.com/nexora/platform/api/internal/platform/cache"
 	"github.com/nexora/platform/api/internal/platform/identity"
@@ -22,11 +23,16 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 	idHandler := identity.NewHandler(pg)
 
 	var mobRepo mobility.Repository
+	var finRepo finance.Repository
 	if pg != nil {
 		mobRepo = mobility.NewPostgresRepository(pg)
+		finRepo = finance.NewPostgresRepository(pg)
 	}
+	sharedCache := cache.New(cfg.RedisURL)
 	mobSvc := mobility.NewService(mobRepo, mobility.HeuristicRoutingProvider{}, mobility.NewMLClient(cfg.MLServiceURL), logger).
-		WithCache(cache.New(cfg.RedisURL))
+		WithCache(sharedCache)
+	finSvc := finance.NewService(finRepo, finance.NewMLClient(cfg.MLServiceURL), finance.NewEnvelopeVault(cfg.FinanceMasterKey), logger).
+		WithCache(sharedCache)
 
 	r.Route("/api/v1", func(v1 chi.Router) {
 		v1.Get("/healthz", h.Health)
@@ -49,5 +55,8 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 
 		// Mobility module (MoveSmart Feature 1)
 		mobility.Mount(v1, mobSvc)
+
+		// Finance Intelligence Network module
+		finance.Mount(v1, finSvc)
 	})
 }

@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Screen } from '../../../shared/components/Screen';
-import { NavMapCanvas, MapManeuver } from '../../../shared/components/NavMapCanvas';
+import { NavMapCanvas, MapManeuver, QuickReportHazardKind } from '../../../shared/components/NavMapCanvas';
 import { QuickSettingsSheet } from '../../../shared/components/QuickSettingsSheet';
 import { DepartureOptimizerCard } from '../components/DepartureOptimizerCard';
 import { RouteComparisonMatrix } from '../components/RouteComparisonMatrix';
@@ -27,6 +27,7 @@ import {
   RouteAlternative,
   RouteContextPayload,
   TripSummary,
+  digitalTwinApi,
   formatDuration,
   modeLabel,
   moveApi,
@@ -64,7 +65,6 @@ export default function JourneyPlannerScreen() {
   const route = useRoute<any>();
   const nav = useNavigation<any>();
   const qc = useQueryClient();
-  const loc = useLocation();
   const me = useMe();
   const userId = me.data?.id;
   const navPrefs = useNavPreferences();
@@ -93,8 +93,16 @@ export default function JourneyPlannerScreen() {
   const [mapExpanded, setMapExpanded] = useState(false);
   const [fullScreenMap, setFullScreenMap] = useState(false);
   const [fsToolsExpanded, setFsToolsExpanded] = useState(false);
+  const [traceRecording, setTraceRecording] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTrip, setActiveTrip] = useState<ActiveTrip | null>(null);
+
+  const loc = useLocation({
+    watch: !!activeTrip || fullScreenMap,
+    traceEnabled: traceRecording && (!!activeTrip || fullScreenMap),
+    distanceIntervalM: 5,
+    timeIntervalMs: 2500,
+  });
   const [tripStartedMs, setTripStartedMs] = useState<number | null>(null);
   const [tripSyncNote, setTripSyncNote] = useState<string | null>(null);
   const [completedTripId, setCompletedTripId] = useState<string | null>(null);
@@ -183,6 +191,8 @@ export default function JourneyPlannerScreen() {
   };
 
   const activateNavigation = (trip: ActiveTrip, note: string | null) => {
+    loc.clearTrace();
+    setTraceRecording(true);
     setActiveTrip(trip);
     setTripStartedMs(Date.now());
     setTripSyncNote(note);
@@ -242,6 +252,46 @@ export default function JourneyPlannerScreen() {
     refetchInterval: 10_000,
     retry: 0,
   });
+
+  const spatialRadarQuery = useQuery({
+    queryKey: ['spatial-radar', loc.point ? Math.round(loc.point.latitude * 200) : null, loc.point ? Math.round(loc.point.longitude * 200) : null],
+    queryFn: () => moveDataApi.spatialRadar(loc.point!, 2500),
+    enabled: !!loc.point && (fullScreenMap || !!activeTrip),
+    refetchInterval: 12_000,
+    retry: 0,
+  });
+
+  // Auto-flush live GPS breadcrumb samples to /locations:batch + Redis Spatial during active cloud trips
+  const uploadedTraceIdxRef = useRef(0);
+  React.useEffect(() => {
+    uploadedTraceIdxRef.current = 0;
+  }, [activeTripId]);
+
+  React.useEffect(() => {
+    if (!isCloudTrip || activeTrip?.status !== 'active') return;
+    const pendingCount = loc.tracePoints.length - uploadedTraceIdxRef.current;
+    if (pendingCount <= 0) return;
+
+    const flush = () => {
+      const batch = loc.tracePoints.slice(uploadedTraceIdxRef.current);
+      if (batch.length === 0) return;
+      uploadedTraceIdxRef.current = loc.tracePoints.length;
+      moveDataApi
+        .batchLocations(activeTripId, batch)
+        .then(() => {
+          tripUpdates.refetch();
+          spatialRadarQuery.refetch();
+        })
+        .catch(() => undefined);
+    };
+
+    if (pendingCount >= 4) {
+      flush();
+      return;
+    }
+    const timer = setTimeout(flush, 7000);
+    return () => clearTimeout(timer);
+  }, [isCloudTrip, activeTrip?.status, activeTripId, loc.tracePoints]);
 
   const buildLocalSummary = (mode: string): TripSummary => {
     const distM = selectedAlt?.distance_meters ?? 6400;
@@ -313,8 +363,19 @@ export default function JourneyPlannerScreen() {
         return activeTrip!;
       }
       if (loc.point) {
-        await moveDataApi.batchLocations(tripId, [loc.point]).catch(() => undefined);
+        await moveDataApi
+          .batchLocations(tripId, [
+            {
+              ...loc.point,
+              speed_mps: loc.speedMps,
+              heading_degrees: loc.headingDeg,
+              accuracy_meters: loc.accuracyM,
+              recorded_at: new Date().toISOString(),
+            },
+          ])
+          .catch(() => undefined);
       }
+      spatialRadarQuery.refetch();
       return moveDataApi.getTrip(tripId);
     },
     onSuccess: t => {
@@ -332,8 +393,42 @@ export default function JourneyPlannerScreen() {
         longitude: loc.point!.longitude,
         hint_category,
       }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hazards-nearby'] });
+      spatialRadarQuery.refetch();
+    },
+  });
+
+  const twinQuickReport = useMutation({
+    mutationFn: async (kind: QuickReportHazardKind) => {
+      if (!loc.point) return;
+      if (kind === 'animal_crossing') {
+        return digitalTwinApi.reportAnimalSighting({
+          latitude: loc.point.latitude,
+          longitude: loc.point.longitude,
+          species_group: 'stray_cattle_or_dog',
+          severity: 3,
+        });
+      }
+      if (kind === 'pothole' || kind === 'waterlogging') {
+        await digitalTwinApi
+          .observeRoadMemory({
+            latitude: loc.point.latitude,
+            longitude: loc.point.longitude,
+            condition_type: kind,
+            severity: 3,
+          })
+          .catch(() => undefined);
+      }
+      return quickReport.mutateAsync(kind);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hazards-nearby'] }),
   });
+
+  const handleQuickReport = (kind: QuickReportHazardKind) => {
+    if (!loc.point) return;
+    twinQuickReport.mutate(kind);
+  };
 
   const sendFeedback = useMutation({
     mutationFn: async (rating: number) => {
@@ -621,6 +716,16 @@ export default function JourneyPlannerScreen() {
           destination={dest}
           hazards={hazards.data?.hazards ?? []}
           trafficSegments={traffic.data?.segments ?? []}
+          tracePoints={loc.tracePoints}
+          liveHeadingDeg={loc.headingDeg}
+          accuracyM={loc.accuracyM}
+          tracedDistanceM={loc.tracedDistanceM}
+          tracingActive={traceRecording && (loc.isWatching || !!activeTrip || fullScreenMap)}
+          onToggleTracing={() => setTraceRecording(v => !v)}
+          onClearTrace={loc.clearTrace}
+          onQuickReportHazard={handleQuickReport}
+          reportBusy={quickReport.isPending || twinQuickReport.isPending}
+          spatialRadar={spatialRadarQuery.data}
           maneuver={activeManeuver}
           roadLabel={
             activeTrip
@@ -629,7 +734,7 @@ export default function JourneyPlannerScreen() {
               ? `Route → ${dest.name}`
               : undefined
           }
-          liveSpeedKmph={simulatedSpeedKmph}
+          liveSpeedKmph={loc.speedKmph ?? simulatedSpeedKmph}
           progress={activeTrip ? 0.12 + navProgress * 0.82 : 0}
           voiceMuted={voiceMuted}
           onToggleVoice={() => setVoiceMuted(v => !v)}
@@ -647,14 +752,13 @@ export default function JourneyPlannerScreen() {
                     style={styles.rapidoHeader}>
                     <View style={styles.rapidoHandle} />
                     <View style={styles.between}>
-                      <View>
+                      <View style={{ flex: 1 }}>
                         <Text style={styles.rapidoEta}>
                           {formatDuration(liveEtaSec)}{' '}
                           <Text style={styles.rapidoArriveSub}>· Arrive {etaArrivalClock}</Text>
                         </Text>
                         <Text style={styles.rapidoMeta}>
-                          {(activeDistanceM / 1000).toFixed(1)} km left · {modeLabel(activeTrip.primary_mode)} ·{' '}
-                          {reliabilityPct}% reliable (±{etaBufferMin}m)
+                          {(activeDistanceM / 1000).toFixed(1)} km left · Traced {(loc.tracedDistanceM / 1000).toFixed(2)} km ({loc.tracePoints.length} pts) · {reliabilityPct}% (±{etaBufferMin}m)
                         </Text>
                       </View>
                       <View style={styles.rapidoExpandPill}>
@@ -686,7 +790,7 @@ export default function JourneyPlannerScreen() {
                     </View>
                   )}
 
-                  {/* Expandable Rapido-Style Quick Driving Controls */}
+                  {/* Expandable Rapido-Style Quick Driving Controls + AI Route Explain + Mode Switch */}
                   {fsToolsExpanded && (
                     <View style={styles.rapidoToolsBox}>
                       <View style={styles.rapidoQuickRow}>
@@ -707,21 +811,64 @@ export default function JourneyPlannerScreen() {
                         </TouchableOpacity>
                       </View>
                       <View style={styles.rapidoQuickRow}>
-                        {(
-                          [
-                            { key: 'pothole', label: '⚠ Pothole' },
-                            { key: 'blocked_lane', label: '🚧 Blocked' },
-                            { key: 'waterlogging', label: '🌊 Waterlog' },
-                          ] as const
-                        ).map(h => (
+                        {selectedAlt && (
                           <TouchableOpacity
-                            key={h.key}
-                            onPress={() => quickReport.mutate(h.key)}
+                            onPress={() => handleAskExplain(selectedAlt)}
                             style={styles.rapidoToolBtn}>
-                            <Text style={styles.rapidoToolText}>{h.label}</Text>
+                            <Text style={[styles.rapidoToolText, { color: colors.routeCyan }]}>
+                              {explainRoute.isPending ? '✨ Loading…' : '✨ Why route?'}
+                            </Text>
                           </TouchableOpacity>
-                        ))}
+                        )}
+                        <TouchableOpacity
+                          onPress={triggerDetourSimulation}
+                          style={styles.rapidoToolBtn}>
+                          <Text style={[styles.rapidoToolText, { color: '#FDE68A' }]}>⚡ Detour Check</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setTraceRecording(v => !v)}
+                          style={styles.rapidoToolBtn}>
+                          <Text style={styles.rapidoToolText}>
+                            {traceRecording ? '● Tracing ON' : '⏸ Trace OFF'}
+                          </Text>
+                        </TouchableOpacity>
                       </View>
+                      {alts.length > 1 && (
+                        <View style={styles.rapidoQuickRow}>
+                          {alts.slice(0, 3).map(altOpt => {
+                            const active = altOpt.route_id === selectedAlt?.route_id;
+                            return (
+                              <TouchableOpacity
+                                key={altOpt.route_id}
+                                onPress={() => {
+                                  setSelectedAltId(altOpt.route_id);
+                                  if (activeTrip) {
+                                    setActiveTrip({ ...activeTrip, primary_mode: altOpt.mode.toLowerCase() });
+                                  }
+                                }}
+                                style={[
+                                  styles.rapidoToolBtn,
+                                  active && { borderColor: colors.routeCyan, backgroundColor: 'rgba(42, 224, 196, 0.14)' },
+                                ]}>
+                                <Text style={styles.rapidoToolText} numberOfLines={1}>
+                                  {modeLabel(altOpt.mode)} · {formatDuration(altOpt.duration_seconds)}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+                      {explainTarget && explainRoute.data?.answer && (
+                        <View style={styles.rapidoExplainCard}>
+                          <View style={styles.between}>
+                            <Text style={styles.rapidoExplainTitle}>✨ AI Route Explanation</Text>
+                            <TouchableOpacity onPress={() => setExplainTarget(null)}>
+                              <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '700' }}>✕</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={styles.rapidoExplainText}>{explainRoute.data.answer}</Text>
+                        </View>
+                      )}
                     </View>
                   )}
 
@@ -754,8 +901,8 @@ export default function JourneyPlannerScreen() {
                     </Text>
                     <Text style={styles.rapidoMeta}>
                       {selectedAlt
-                        ? `${formatDuration(selectedAlt.duration_seconds)} · ${(selectedAlt.distance_meters / 1000).toFixed(1)} km · ${modeLabel(selectedAlt.mode)}`
-                        : 'Tap ⛽ Fuel or ⚡ EV pins for live Overpass station details'}
+                        ? `${formatDuration(selectedAlt.duration_seconds)} · ${(selectedAlt.distance_meters / 1000).toFixed(1)} km · ${modeLabel(selectedAlt.mode)}${loc.tracePoints.length > 0 ? ` · Traced ${(loc.tracedDistanceM / 1000).toFixed(2)} km` : ''}`
+                        : `Live GPS Trace ${(loc.tracedDistanceM / 1000).toFixed(2)} km (${loc.tracePoints.length} pts) · Tap ⛽/⚡ pins`}
                     </Text>
                   </View>
                   {selectedAlt && (
@@ -1844,4 +1991,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   rapidoFinishText: { color: '#03120B', fontSize: 13.5, fontWeight: '900' },
+  rapidoExplainCard: {
+    backgroundColor: 'rgba(29, 143, 225, 0.12)',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(42, 224, 196, 0.35)',
+    gap: 4,
+  },
+  rapidoExplainTitle: { color: colors.routeCyan, fontSize: 11.5, fontWeight: '800' },
+  rapidoExplainText: { color: colors.textPrimary, fontSize: 12, lineHeight: 17 },
 });

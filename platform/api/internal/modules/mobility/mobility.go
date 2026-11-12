@@ -44,6 +44,36 @@ func (s *Service) WithCache(c *cache.Client) *Service {
 	return s
 }
 
+const (
+	activeTripsGeoKey   = "move:geo:trips:active"
+	activeHazardsGeoKey = "move:geo:hazards:active"
+)
+
+func hotTripKey(tripID string) string {
+	return "move:trip:live:" + tripID
+}
+
+func hazardDetailKey(hazardID string) string {
+	return "move:hazard:item:" + hazardID
+}
+
+func (s *Service) indexActiveTripSpatial(ctx context.Context, tripID string, p GeoPoint) {
+	if s.cache == nil || tripID == "" || !validLatLon(p) {
+		return
+	}
+	_ = s.cache.GeoAdd(ctx, activeTripsGeoKey, tripID, p.Latitude, p.Longitude, 2*time.Hour)
+}
+
+func (s *Service) indexHazardSpatial(ctx context.Context, hz RoadHazard) {
+	if s.cache == nil || hz.ID == "" || !validLatLon(hz.Location) {
+		return
+	}
+	_ = s.cache.GeoAdd(ctx, activeHazardsGeoKey, hz.ID, hz.Location.Latitude, hz.Location.Longitude, 6*time.Hour)
+	if raw, err := json.Marshal(hz); err == nil {
+		s.cache.Set(ctx, hazardDetailKey(hz.ID), string(raw), 6*time.Hour)
+	}
+}
+
 // Mount registers all /move/* routes on the given router.
 func Mount(r chi.Router, svc *Service) {
 	if svc == nil {
@@ -76,6 +106,7 @@ func Mount(r chi.Router, svc *Service) {
 		m.Post("/hotspots", svc.DiscoverHotspots)
 		m.Post("/hazards/report", svc.ReportRoadHazard)
 		m.Get("/hazards/nearby", svc.NearbyRoadHazards)
+		m.Get("/spatial/nearby", svc.GetNearbySpatialRadar)
 		m.Post("/assistant/query", svc.AssistantQuery)
 		m.Get("/stack/libraries", svc.ListStackLibraries)
 		m.Get("/intelligence/status", svc.GetIntelligenceStatus)
@@ -276,26 +307,26 @@ func (s *Service) PlanJourney(w http.ResponseWriter, r *http.Request) {
 			ci := buildConfidenceInterval(p50, p80, p90, relScore)
 
 			slots[idx] = &ScoredRoute{
-				RouteID:              uuid.NewString(),
-				Provider:             rt.Provider,
-				Mode:                 mode,
-				Modes:                modeSeq,
-				Legs:                 legs,
-				DistanceMeters:       rt.DistanceMeters,
-				P50Seconds:           p50,
-				P80Seconds:           p80,
-				P90Seconds:           p90,
-				ShadowP50Seconds:     shadowP50,
-				ShadowP90Seconds:     shadowP90,
-				ShadowModelVer:       shadowVer,
-				ModelVersion:         mv,
-				ReliabilityScore:     relScore,
-				ReliabilityBreakdown: relBreakdown,
-				ConfidenceInterval:   ci,
-				EstimatedCostINR:     estimateCostINR(mode, rt.DistanceMeters),
-				CO2Grams:             estimateCO2Grams(mode, rt.DistanceMeters),
-				WalkMinutes:          walkMin,
-				Transfers:            transfers,
+				RouteID:               uuid.NewString(),
+				Provider:              rt.Provider,
+				Mode:                  mode,
+				Modes:                 modeSeq,
+				Legs:                  legs,
+				DistanceMeters:        rt.DistanceMeters,
+				P50Seconds:            p50,
+				P80Seconds:            p80,
+				P90Seconds:            p90,
+				ShadowP50Seconds:      shadowP50,
+				ShadowP90Seconds:      shadowP90,
+				ShadowModelVer:        shadowVer,
+				ModelVersion:          mv,
+				ReliabilityScore:      relScore,
+				ReliabilityBreakdown:  relBreakdown,
+				ConfidenceInterval:    ci,
+				EstimatedCostINR:      estimateCostINR(mode, rt.DistanceMeters),
+				CO2Grams:              estimateCO2Grams(mode, rt.DistanceMeters),
+				WalkMinutes:           walkMin,
+				Transfers:             transfers,
 				HazardsCount:          hazardsCount,
 				HazardPenaltySeconds:  hazardPenaltyS,
 				EventImpactSummary:    eventSummary,
@@ -428,8 +459,7 @@ func (s *Service) RecommendDeparture(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orig := GeoPoint{Latitude: 17.385, Longitude: 78.486}
-	dest := GeoPoint{Latitude: 17.448, Longitude: 78.390}
+	var orig, dest GeoPoint
 	if s.repo != nil && req.OriginPlaceID != "" {
 		if sp, err := s.repo.GetSavedPlace(r.Context(), req.OriginPlaceID); err == nil {
 			orig = sp.Location
@@ -451,10 +481,12 @@ func (s *Service) RecommendDeparture(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "car"
 	}
-	routes, _ := s.routing.GetRoutes(r.Context(), RouteRequest{Origin: orig, Destination: dest, Mode: mode, DepartureTime: fromT})
 	baseDur := 1800
-	if len(routes) > 0 {
-		baseDur = routes[0].DurationSeconds
+	if validLatLon(orig) && validLatLon(dest) {
+		routes, _ := s.routing.GetRoutes(r.Context(), RouteRequest{Origin: orig, Destination: dest, Mode: mode, DepartureTime: fromT})
+		if len(routes) > 0 {
+			baseDur = routes[0].DurationSeconds
+		}
 	}
 
 	best, altSlots, series, timeSavedMin, reason := evaluateDepartureWindow(fromT, toT, arrivalBy, baseDur, mode, req.Objective)
@@ -480,7 +512,10 @@ func (s *Service) RecommendDeparture(w http.ResponseWriter, r *http.Request) {
 			"is_optimal":         sl.IsOptimal,
 		})
 	}
-	activeEvents := s.fetchActiveEvents(r.Context(), orig.Latitude, orig.Longitude, best.Departure)
+	var activeEvents []map[string]any
+	if validLatLon(orig) {
+		activeEvents = s.fetchActiveEvents(r.Context(), orig.Latitude, orig.Longitude, best.Departure)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"recommended_departure":      best.Departure.Format(time.RFC3339),
@@ -620,6 +655,7 @@ func (s *Service) StartTrip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "DB_ERROR", "failed to start trip", true)
 		return
 	}
+	s.indexActiveTripSpatial(r.Context(), trip.ID, body.Origin)
 	writeJSON(w, http.StatusCreated, trip)
 }
 
@@ -678,7 +714,12 @@ func (s *Service) BatchLocations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "DB_ERROR", "failed to store location samples", true)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"trip_id": tripID, "accepted": n})
+	last := body.Samples[len(body.Samples)-1]
+	s.indexActiveTripSpatial(r.Context(), tripID, GeoPoint{Latitude: last.Latitude, Longitude: last.Longitude})
+	if s.cache != nil {
+		s.cache.Del(r.Context(), hotTripKey(tripID))
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"trip_id": tripID, "accepted": n, "spatial_indexed": s.cache != nil})
 }
 
 func (s *Service) CompleteTrip(w http.ResponseWriter, r *http.Request) {
@@ -700,6 +741,10 @@ func (s *Service) CompleteTrip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "DB_ERROR", "failed to complete trip", true)
 		return
 	}
+	if s.cache != nil {
+		s.cache.Del(r.Context(), hotTripKey(tripID))
+		_ = s.cache.GeoRem(r.Context(), activeTripsGeoKey, tripID)
+	}
 	writeJSON(w, http.StatusOK, trip)
 }
 
@@ -713,6 +758,15 @@ func (s *Service) GetTripUpdates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "valid trip id is required", false)
 		return
 	}
+	if s.cache != nil {
+		if cached, ok := s.cache.Get(r.Context(), hotTripKey(tripID)); ok {
+			var upd LiveTripUpdate
+			if json.Unmarshal([]byte(cached), &upd) == nil {
+				writeJSON(w, http.StatusOK, upd)
+				return
+			}
+		}
+	}
 	upd, err := s.repo.GetLiveTripUpdate(r.Context(), tripID)
 	if errors.Is(err, ErrNotFound) {
 		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "trip not found", false)
@@ -721,6 +775,11 @@ func (s *Service) GetTripUpdates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, r, http.StatusBadGateway, "DB_ERROR", "failed to compute live trip updates", true)
 		return
+	}
+	if s.cache != nil && upd != nil {
+		if raw, err := json.Marshal(upd); err == nil {
+			s.cache.Set(r.Context(), hotTripKey(tripID), string(raw), 8*time.Second)
+		}
 	}
 	writeJSON(w, http.StatusOK, upd)
 }
@@ -1077,10 +1136,18 @@ func (s *Service) PredictDemand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	cell := "cell_global"
+	if h3s, ok := body["h3_index"].(string); ok && h3s != "" {
+		cell = h3s
+	} else if lat, ok1 := body["latitude"].(float64); ok1 {
+		if lon, ok2 := body["longitude"].(float64); ok2 && validLatLon(GeoPoint{Latitude: lat, Longitude: lon}) {
+			cell = spatialCellID(lat, lon)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"forecasts": []map[string]any{
 			{
-				"h3_index":              "88608b08a1fffff",
+				"h3_index":              cell,
 				"horizon_minutes":       30,
 				"predicted_demand_idx":  0.65,
 				"surge_pressure":        1.15,
@@ -1141,7 +1208,7 @@ func (s *Service) ReportRoadHazard(w http.ResponseWriter, r *http.Request) {
 	confidence := 0.85
 	laneImpactFactor := 0.80
 	modelVer := "rtdetr-yolo-mobilenet-v1"
-	h3Idx := "88608b08a1fffff"
+	h3Idx := spatialCellID(body.Latitude, body.Longitude)
 	var bboxes any
 
 	if s.ml != nil {
@@ -1210,6 +1277,9 @@ func (s *Service) ReportRoadHazard(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusBadGateway, "DB_ERROR", "failed to persist road hazard", true)
 			return
 		}
+		if created != nil {
+			s.indexHazardSpatial(r.Context(), *created)
+		}
 		writeJSON(w, http.StatusCreated, created)
 		return
 	}
@@ -1217,10 +1287,11 @@ func (s *Service) ReportRoadHazard(w http.ResponseWriter, r *http.Request) {
 	hz.ID = uuid.NewString()
 	hz.Status = "active"
 	hz.ReportedAt = time.Now().UTC()
+	s.indexHazardSpatial(r.Context(), hz)
 	writeJSON(w, http.StatusCreated, hz)
 }
 
-// NearbyRoadHazards returns active road hazards around a coordinate.
+// NearbyRoadHazards returns active road hazards around a coordinate, merging hot Redis Spatial entries with PostGIS.
 func (s *Service) NearbyRoadHazards(w http.ResponseWriter, r *http.Request) {
 	lat, err1 := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lon, err2 := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
@@ -1229,8 +1300,26 @@ func (s *Service) NearbyRoadHazards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	radius, _ := strconv.Atoi(r.URL.Query().Get("radius_m"))
+	if radius <= 0 {
+		radius = 3000
+	}
+	hotHazards := make([]RoadHazard, 0)
+	hotSet := make(map[string]bool)
+	if s.cache != nil {
+		if members, err := s.cache.GeoSearchRadius(r.Context(), activeHazardsGeoKey, lat, lon, float64(radius), 25); err == nil {
+			for _, m := range members {
+				if raw, ok := s.cache.Get(r.Context(), hazardDetailKey(m.Member)); ok {
+					var hz RoadHazard
+					if json.Unmarshal([]byte(raw), &hz) == nil {
+						hotHazards = append(hotHazards, hz)
+						hotSet[hz.ID] = true
+					}
+				}
+			}
+		}
+	}
 	if s.repo == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"hazards": []any{}})
+		writeJSON(w, http.StatusOK, map[string]any{"hazards": hotHazards, "spatial_source": "redis-geo"})
 		return
 	}
 	hazards, err := s.repo.NearbyRoadHazards(r.Context(), lat, lon, radius)
@@ -1238,7 +1327,54 @@ func (s *Service) NearbyRoadHazards(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "DB_ERROR", "failed to query nearby road hazards", true)
 		return
 	}
+	seen := make(map[string]bool, len(hazards))
+	warmed := 0
+	for _, h := range hazards {
+		seen[h.ID] = true
+		if !hotSet[h.ID] && warmed < 10 {
+			s.indexHazardSpatial(r.Context(), h)
+			warmed++
+		}
+	}
+	for _, h := range hotHazards {
+		if !seen[h.ID] {
+			hazards = append([]RoadHazard{h}, hazards...)
+			seen[h.ID] = true
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"hazards": hazards})
+}
+
+// GetNearbySpatialRadar returns sub-millisecond Redis Spatial (GEOADD/GEOSEARCH) nearby active trips and hot hazards.
+func (s *Service) GetNearbySpatialRadar(w http.ResponseWriter, r *http.Request) {
+	lat, err1 := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	lon, err2 := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
+	if err1 != nil || err2 != nil || !validLatLon(GeoPoint{Latitude: lat, Longitude: lon}) {
+		writeError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "valid lat and lon query parameters are required", false)
+		return
+	}
+	radiusM, _ := strconv.ParseFloat(r.URL.Query().Get("radius_m"), 64)
+	if radiusM <= 0 || radiusM > 25000 {
+		radiusM = 2500
+	}
+	var nearbyTrips, nearbyHazards []cache.GeoMember
+	if s.cache != nil {
+		nearbyTrips, _ = s.cache.GeoSearchRadius(r.Context(), activeTripsGeoKey, lat, lon, radiusM, 40)
+		nearbyHazards, _ = s.cache.GeoSearchRadius(r.Context(), activeHazardsGeoKey, lat, lon, radiusM, 40)
+	}
+	if nearbyTrips == nil {
+		nearbyTrips = []cache.GeoMember{}
+	}
+	if nearbyHazards == nil {
+		nearbyHazards = []cache.GeoMember{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"spatial_source":       "redis-geo",
+		"radius_meters":        radiusM,
+		"active_nearby_trips":  len(nearbyTrips),
+		"nearby_trip_probes":   nearbyTrips,
+		"nearby_hazard_coords": nearbyHazards,
+	})
 }
 
 // AssistantQuery (Pillar 5: Qwen3 + Whisper + BGE-M3 + Multilingual MiniLM reranker in EN/TE/HI).

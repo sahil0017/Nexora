@@ -51,8 +51,8 @@ def h3_to_latlon(cell: str) -> tuple[float, float]:
         lat = step * (1.5 * r)
         lon = step * (math.sqrt(3.0) * (q + 0.5 * r))
         return round(lat, 6), round(lon, 6)
-    except Exception:
-        return 17.385, 78.486
+    except Exception as exc:
+        raise ValueError(f"invalid H3 cell identifier: {cell}") from exc
 
 
 def h3_neighbors(cell: str, k: int = 1) -> list[str]:

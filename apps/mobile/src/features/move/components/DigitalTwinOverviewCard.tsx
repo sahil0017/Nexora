@@ -11,6 +11,7 @@ type Props = {
   loading?: boolean;
   onReportAnimal?: () => void;
   onReinforceRoadMemory?: (condition: string) => void;
+  onContributePrivacyPing?: () => void;
   submittingAction?: boolean;
 };
 
@@ -33,6 +34,7 @@ export function DigitalTwinOverviewCard({
   loading,
   onReportAnimal,
   onReinforceRoadMemory,
+  onContributePrivacyPing,
   submittingAction,
 }: Props) {
   if (loading && !twin) {
@@ -157,12 +159,24 @@ export function DigitalTwinOverviewCard({
 
       {/* Privacy Shield */}
       <View style={styles.privacyBar}>
-        <Text style={styles.privacyText}>
-          Privacy Shield: k ≥ {privacy?.k_threshold ?? 3} anonymity · Laplace ε={privacy?.epsilon_budget ?? 1.0} DP
-        </Text>
-        <Text style={styles.privacyMeta}>
-          {privacy ? `${privacy.total_cells_published} pub / ${privacy.total_cells_suppressed} suppressed` : 'No PII stored'}
-        </Text>
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.privacyText}>
+              Privacy Shield: k ≥ {privacy?.k_threshold ?? 3} anonymity · Laplace ε={privacy?.epsilon_budget ?? 1.0} DP
+            </Text>
+            <Text style={styles.privacyMeta}>
+              {privacy
+                ? `${privacy.total_pings_processed} pings · ${privacy.total_cells_published} pub / ${privacy.total_cells_suppressed} suppressed`
+                : 'No PII stored'}
+            </Text>
+          </View>
+          {onContributePrivacyPing ? (
+            <Chip
+              label={submittingAction ? 'Sending…' : 'Share Ping'}
+              onPress={onContributePrivacyPing}
+            />
+          ) : null}
+        </View>
       </View>
     </Card>
   );

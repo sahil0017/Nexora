@@ -9,7 +9,12 @@ export type NavIconName =
   | 'Navigate'
   | 'Radar'
   | 'Places'
-  | 'MovePrefs';
+  | 'MovePrefs'
+  | 'FinTwin'
+  | 'FinLedger'
+  | 'FinWealth'
+  | 'FinLab'
+  | 'FinCFO';
 
 /**
  * Pure React Native geometric navigation icons — zero external font or Unicode glyph dependencies,
@@ -204,6 +209,76 @@ export function NavIcon({ name, color }: { name: NavIconName; color: string }) {
               />
             </View>
           ))}
+        </View>
+      );
+
+    case 'FinTwin':
+      return (
+        <View style={styles.box}>
+          <View
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 5,
+              borderWidth: 2,
+              borderColor: color,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+          </View>
+        </View>
+      );
+
+    case 'FinLedger':
+      return (
+        <View style={[styles.box, { justifyContent: 'space-evenly', paddingVertical: 2 }]}>
+          <View style={{ width: 16, height: 2.5, borderRadius: 2, backgroundColor: color }} />
+          <View style={{ width: 12, height: 2.5, borderRadius: 2, backgroundColor: color, alignSelf: 'flex-start', marginLeft: 3 }} />
+          <View style={{ width: 16, height: 2.5, borderRadius: 2, backgroundColor: color }} />
+        </View>
+      );
+
+    case 'FinWealth':
+      return (
+        <View style={[styles.box, { flexDirection: 'row', alignItems: 'flex-end', gap: 3, paddingBottom: 2 }]}>
+          <View style={{ width: 4, height: 7, borderRadius: 2, backgroundColor: color }} />
+          <View style={{ width: 4, height: 12, borderRadius: 2, backgroundColor: color }} />
+          <View style={{ width: 4, height: 16, borderRadius: 2, backgroundColor: color }} />
+        </View>
+      );
+
+    case 'FinLab':
+      return (
+        <View style={styles.box}>
+          <View
+            style={{
+              width: 15,
+              height: 15,
+              borderRadius: 4,
+              borderWidth: 2,
+              borderColor: color,
+              transform: [{ rotate: '45deg' }],
+            }}
+          />
+        </View>
+      );
+
+    case 'FinCFO':
+      return (
+        <View style={styles.box}>
+          <View
+            style={{
+              width: 17,
+              height: 14,
+              borderRadius: 6,
+              borderWidth: 2,
+              borderColor: color,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: color }} />
+          </View>
         </View>
       );
   }

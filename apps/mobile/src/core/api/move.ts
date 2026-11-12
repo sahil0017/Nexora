@@ -3,6 +3,35 @@ import { api } from './client';
 
 export type GeoPoint = { latitude: number; longitude: number };
 
+export type LocationSampleInput = GeoPoint & {
+  speed_mps?: number;
+  heading_degrees?: number;
+  accuracy_meters?: number;
+  recorded_at?: string;
+};
+
+export type TracePoint = GeoPoint & {
+  speed_mps?: number;
+  heading_degrees?: number;
+  accuracy_meters?: number;
+  recorded_at: string;
+};
+
+export type SpatialRadarMember = {
+  member: string;
+  latitude: number;
+  longitude: number;
+  distance_m: number;
+};
+
+export type SpatialRadarSnapshot = {
+  spatial_source: string;
+  radius_meters: number;
+  active_nearby_trips: number;
+  nearby_trip_probes: SpatialRadarMember[];
+  nearby_hazard_coords: SpatialRadarMember[];
+};
+
 export type RouteLeg = {
   mode: string;
   label?: string;
@@ -77,7 +106,7 @@ export type NearbyPOI = {
   source: string;
 };
 
-function haversineDistM(a: GeoPoint, b: GeoPoint): number {
+export function haversineDistM(a: GeoPoint, b: GeoPoint): number {
   const R = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(b.latitude - a.latitude);
@@ -86,6 +115,17 @@ function haversineDistM(a: GeoPoint, b: GeoPoint): number {
   const s2 = Math.sin(dLon / 2);
   const h = s1 * s1 + Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * s2 * s2;
   return Math.round(2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)));
+}
+
+export function computeBearingDeg(from: GeoPoint, to: GeoPoint): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const lat1 = toRad(from.latitude);
+  const lat2 = toRad(to.latitude);
+  const dLon = toRad(to.longitude - from.longitude);
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return Math.round(((toDeg(Math.atan2(y, x)) % 360) + 360) % 360);
 }
 
 async function fetchDirectOverpassPOIs(p: GeoPoint, radiusM: number): Promise<{ pois: NearbyPOI[]; source: string }> {
@@ -680,10 +720,17 @@ export const moveDataApi = {
     normalizeTrip(await api.post<ActiveTrip>('/move/trips', body)),
   getTrip: async (tripId: string) =>
     normalizeTrip(await api.get<ActiveTrip>(`/move/trips/${encodeURIComponent(tripId)}`)),
-  batchLocations: (tripId: string, samples: GeoPoint[]) =>
-    api.post<{ trip_id: string; accepted: number }>(`/move/trips/${encodeURIComponent(tripId)}/locations:batch`, { samples }),
+  batchLocations: (tripId: string, samples: Array<GeoPoint | LocationSampleInput>) =>
+    api.post<{ trip_id: string; accepted: number; spatial_indexed?: boolean }>(
+      `/move/trips/${encodeURIComponent(tripId)}/locations:batch`,
+      { samples },
+    ),
   tripUpdates: (tripId: string) =>
     api.get<LiveTripUpdate>(`/move/trips/${encodeURIComponent(tripId)}/updates`),
+  spatialRadar: (p: GeoPoint, radiusM = 2500) =>
+    api.get<SpatialRadarSnapshot>(
+      `/move/spatial/nearby?lat=${p.latitude}&lon=${p.longitude}&radius_m=${radiusM}`,
+    ),
   completeTrip: async (tripId: string) =>
     normalizeTrip(await api.post<ActiveTrip>(`/move/trips/${encodeURIComponent(tripId)}/complete`)),
   submitFeedback: (body: {

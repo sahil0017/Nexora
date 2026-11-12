@@ -14,69 +14,330 @@ import (
 	"time"
 )
 
-// DigitalTwinRepository optionally persists 12-pillar digital twin, road memory,
-// conflict zone, simulation, and privacy-aggregated flow records in PostGIS.
+// DigitalTwinRepository optionally persists and hydrates 12-pillar digital twin, road memory,
+// conflict zone, crowd forecast, pedestrian safety, simulation, and privacy records in PostGIS.
 type DigitalTwinRepository interface {
-	SaveRoadMemoryObservation(ctx context.Context, lat, lon float64, cellID, conditionType string, severity float64, observationCount int, confidence float64) error
-	SaveAnimalSighting(ctx context.Context, lat, lon float64, cellID, speciesGroup, corridorType string, riskScore float64) error
-	SaveUrbanSimulation(ctx context.Context, simID, scenarioName, interventionType string, lat, lon, intensityPct float64, baseline, projected, deltas map[string]any) error
-	SavePrivacyAggregateCell(ctx context.Context, cellID string, lat, lon float64, bucketStart time.Time, noisyCount, noisySpeed float64, kThreshold int, epsilon float64) error
+	SaveRoadMemoryObservation(ctx context.Context, lat, lon float64, h3Index, conditionType string, severity float64, observationCount int, confidence float64) error
+	LoadCorridorRoadMemory(ctx context.Context, lat, lon, radiusM float64) []map[string]any
+	SaveAnimalSighting(ctx context.Context, lat, lon float64, h3Index, speciesGroup, corridorType string, riskScore float64, advisory string) error
+	LoadNearbyAnimalZones(ctx context.Context, lat, lon, radiusM float64) []map[string]any
+	SaveDigitalTwinSnapshot(ctx context.Context, h3Index string, lat, lon, crowdDensity, safetyIndex, avgSpeedKPH, walkSafetyScore, lightingIndex float64, animalRisk float64, forecasts []map[string]any, modelVersion string) error
+	SaveUrbanSimulation(ctx context.Context, scenarioName, interventionType, h3Index string, intensityPct float64, baseline, projected, deltas map[string]any, summary string) error
+	SavePrivacyAggregateCell(ctx context.Context, h3Index string, bucketStart time.Time, rawCount, kThreshold int, epsilon float64, suppressed bool, noisedDensity, noisedSpeed float64) error
+	LoadPrivacySummary(ctx context.Context) (totalPings, published, suppressed int, ok bool)
 }
 
-func (r *PostgresRepository) SaveRoadMemoryObservation(ctx context.Context, lat, lon float64, cellID, conditionType string, severity float64, observationCount int, confidence float64) error {
+func normalizeRoadCondition(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "waterlogging", "chronic_waterlogging", "flooding":
+		return "chronic_waterlogging"
+	case "pothole", "damaged_road", "surface_damage":
+		return "surface_damage"
+	case "blocked_lane", "construction", "construction_zone":
+		return "construction_zone"
+	case "signal_bottleneck", "signal":
+		return "signal_bottleneck"
+	case "animal_crossing":
+		return "animal_crossing"
+	case "unlit_walkway":
+		return "unlit_walkway"
+	case "smooth_corridor":
+		return "smooth_corridor"
+	default:
+		return "surface_damage"
+	}
+}
+
+func severityLabelFromFloat(sev float64) string {
+	switch {
+	case sev >= 0.85:
+		return "critical"
+	case sev >= 0.65:
+		return "high"
+	case sev >= 0.40:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func normalizeSpeciesGroup(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "stray_cattle":
+		return "stray_cattle"
+	case "stray_dog", "stray_cattle_or_dog":
+		return "stray_dog"
+	case "wildlife_deer", "deer":
+		return "wildlife_deer"
+	case "primate", "monkey":
+		return "primate"
+	case "bird_flock":
+		return "bird_flock"
+	default:
+		return "other"
+	}
+}
+
+func normalizeCorridorType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "urban_arterial":
+		return "urban_arterial"
+	case "peri_urban", "peri_urban_verge", "urban_verge":
+		return "peri_urban"
+	case "forest_edge":
+		return "forest_edge"
+	case "highway_crossing":
+		return "highway_crossing"
+	default:
+		return "urban_arterial"
+	}
+}
+
+func (r *PostgresRepository) SaveRoadMemoryObservation(ctx context.Context, lat, lon float64, h3Index, conditionType string, severity float64, observationCount int, confidence float64) error {
 	if r == nil || r.pool == nil {
 		return nil
+	}
+	cond := normalizeRoadCondition(conditionType)
+	sevLabel := severityLabelFromFloat(severity)
+	status := "active"
+	if observationCount >= 2 {
+		status = "verified"
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO mobility.road_memory_nodes
-		   (cell_id, location, condition_type, severity, observation_count, quorum_verified, confidence, last_reinforced_at)
-		 VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, $4, $5, $6, $7, $8, now())
-		 ON CONFLICT DO NOTHING`,
-		cellID, lon, lat, conditionType, severity, observationCount, observationCount >= 2, confidence,
+		   (h3_index, location, condition_type, severity, confidence, observation_count, verified_by_count, status, last_observed_at)
+		 VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, $4, $5, $6, $7, $7, $8, now())
+		 ON CONFLICT (h3_index, condition_type) DO UPDATE SET
+		   severity = EXCLUDED.severity,
+		   confidence = GREATEST(mobility.road_memory_nodes.confidence, EXCLUDED.confidence),
+		   observation_count = mobility.road_memory_nodes.observation_count + 1,
+		   verified_by_count = mobility.road_memory_nodes.verified_by_count + 1,
+		   status = CASE WHEN mobility.road_memory_nodes.observation_count + 1 >= 2 THEN 'verified' ELSE 'active' END,
+		   last_observed_at = now()`,
+		h3Index, lon, lat, cond, sevLabel, confidence, observationCount, status,
 	)
 	return err
 }
 
-func (r *PostgresRepository) SaveAnimalSighting(ctx context.Context, lat, lon float64, cellID, speciesGroup, corridorType string, riskScore float64) error {
+func (r *PostgresRepository) LoadCorridorRoadMemory(ctx context.Context, lat, lon, radiusM float64) []map[string]any {
 	if r == nil || r.pool == nil {
 		return nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text, h3_index, ST_Y(location::geometry), ST_X(location::geometry),
+		        condition_type, severity, confidence, observation_count, status, last_observed_at
+		 FROM mobility.road_memory_nodes
+		 WHERE status IN ('active', 'verified')
+		   AND ST_DWithin(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+		 ORDER BY confidence DESC, last_observed_at DESC
+		 LIMIT 25`,
+		lon, lat, radiusM,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := make([]map[string]any, 0)
+	for rows.Next() {
+		var id, h3, cond, sev, status string
+		var rLat, rLon, conf float64
+		var obs int
+		var ts time.Time
+		if err := rows.Scan(&id, &h3, &rLat, &rLon, &cond, &sev, &conf, &obs, &status, &ts); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"node_id":           id,
+			"h3_index":          h3,
+			"latitude":          rLat,
+			"longitude":         rLon,
+			"condition_type":    cond,
+			"severity":          sev,
+			"confidence":        math.Round(conf*1000) / 1000,
+			"observation_count": obs,
+			"quorum_verified":   status == "verified" || obs >= 2,
+			"last_updated":      ts.UTC().Format(time.RFC3339),
+		})
+	}
+	return out
+}
+
+func (r *PostgresRepository) SaveAnimalSighting(ctx context.Context, lat, lon float64, h3Index, speciesGroup, corridorType string, riskScore float64, advisory string) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+	if advisory == "" {
+		advisory = "Reported animal activity near roadway; stay alert and reduce verge speed."
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO mobility.animal_conflict_zones
-		   (cell_id, location, species_group, corridor_type, base_risk_score, sighting_count, last_sighting_at)
-		 VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, $4, $5, $6, 1, now())`,
-		cellID, lon, lat, speciesGroup, corridorType, riskScore,
+		   (h3_index, species_group, corridor_type, location, risk_score, sighting_count, advisory, status, last_observed_at)
+		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6, 1, $7, 'active', now())`,
+		h3Index, normalizeSpeciesGroup(speciesGroup), normalizeCorridorType(corridorType), lon, lat, math.Min(1.0, math.Max(0.0, riskScore)), advisory,
 	)
 	return err
 }
 
-func (r *PostgresRepository) SaveUrbanSimulation(ctx context.Context, simID, scenarioName, interventionType string, lat, lon, intensityPct float64, baseline, projected, deltas map[string]any) error {
+func (r *PostgresRepository) LoadNearbyAnimalZones(ctx context.Context, lat, lon, radiusM float64) []map[string]any {
 	if r == nil || r.pool == nil {
 		return nil
 	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text, h3_index, species_group, corridor_type, ST_Y(location::geometry), ST_X(location::geometry), risk_score, advisory, last_observed_at
+		 FROM mobility.animal_conflict_zones
+		 WHERE status = 'active'
+		   AND ST_DWithin(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+		 ORDER BY risk_score DESC, last_observed_at DESC
+		 LIMIT 20`,
+		lon, lat, radiusM,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := make([]map[string]any, 0)
+	for rows.Next() {
+		var id, h3, sp, corr, adv string
+		var zLat, zLon, risk float64
+		var ts time.Time
+		if err := rows.Scan(&id, &h3, &sp, &corr, &zLat, &zLon, &risk, &adv, &ts); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"zone_id":       id,
+			"h3_index":      h3,
+			"species_group": sp,
+			"corridor_type": corr,
+			"latitude":      zLat,
+			"longitude":     zLon,
+			"risk_score":    math.Round(risk*100) / 100,
+			"advisory":      adv,
+			"reported_at":   ts.UTC().Format(time.RFC3339),
+		})
+	}
+	return out
+}
+
+func (r *PostgresRepository) SaveDigitalTwinSnapshot(ctx context.Context, h3Index string, lat, lon, crowdDensity, safetyIndex, avgSpeedKPH, walkSafetyScore, lightingIndex, animalRisk float64, forecasts []map[string]any, modelVersion string) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+	nodeID := h3Index + "_road"
+	hubID := h3Index + "_ped"
+	metaJSON, _ := json.Marshal(map[string]any{"avg_speed_kph": avgSpeedKPH, "model_version": modelVersion})
+	_, _ = r.pool.Exec(ctx,
+		`INSERT INTO mobility.digital_twin_nodes (node_id, h3_index, node_type, location, vehicle_flow, crowd_density, safety_index, state_metadata)
+		 VALUES ($1, $2, 'road_junction', ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography, $5, $6, $7, $8)
+		 ON CONFLICT (node_id) DO UPDATE SET
+		   vehicle_flow = EXCLUDED.vehicle_flow,
+		   crowd_density = EXCLUDED.crowd_density,
+		   safety_index = EXCLUDED.safety_index,
+		   state_metadata = EXCLUDED.state_metadata`,
+		nodeID, h3Index, lon, lat, math.Max(0, avgSpeedKPH*25.0), math.Min(1, math.Max(0, crowdDensity)), math.Min(1, math.Max(0, safetyIndex)), metaJSON,
+	)
+	_, _ = r.pool.Exec(ctx,
+		`INSERT INTO mobility.digital_twin_nodes (node_id, h3_index, node_type, location, vehicle_flow, crowd_density, safety_index)
+		 VALUES ($1, $2, 'pedestrian_zone', ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography, 0, $5, $6)
+		 ON CONFLICT (node_id) DO UPDATE SET crowd_density = EXCLUDED.crowd_density, safety_index = EXCLUDED.safety_index`,
+		hubID, h3Index, lon, lat, math.Min(1, math.Max(0, crowdDensity)), math.Min(1, math.Max(0, walkSafetyScore/100.0)),
+	)
+	_, _ = r.pool.Exec(ctx,
+		`INSERT INTO mobility.digital_twin_edges (edge_id, from_node_id, to_node_id, mode, current_load_pct, avg_speed_kph)
+		 VALUES ($1, $2, $3, 'multimodal', $4, $5)
+		 ON CONFLICT (edge_id) DO UPDATE SET current_load_pct = EXCLUDED.current_load_pct, avg_speed_kph = EXCLUDED.avg_speed_kph, updated_at = now()`,
+		h3Index+"_edge", nodeID, hubID, math.Min(2.5, math.Max(0, crowdDensity)), avgSpeedKPH,
+	)
+	_, _ = r.pool.Exec(ctx,
+		`INSERT INTO mobility.pedestrian_safety_cells (h3_index, walk_safety_score, lighting_index, speed_exposure_kph)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (h3_index) DO UPDATE SET
+		   walk_safety_score = EXCLUDED.walk_safety_score,
+		   lighting_index = EXCLUDED.lighting_index,
+		   speed_exposure_kph = EXCLUDED.speed_exposure_kph`,
+		h3Index, math.Min(100, math.Max(0, walkSafetyScore)), math.Min(1, math.Max(0, lightingIndex)), avgSpeedKPH,
+	)
+	bucketNow := time.Now().UTC().Truncate(15 * time.Minute)
+	for _, f := range forecasts {
+		hMin := 15
+		if hv, okH := f["horizon_minutes"].(int); okH {
+			hMin = hv
+		} else if hvF, okHF := f["horizon_minutes"].(float64); okHF {
+			hMin = int(hvF)
+		}
+		if hMin != 15 && hMin != 30 && hMin != 60 && hMin != 120 {
+			continue
+		}
+		dens, _ := f["predicted_crowd_density"].(float64)
+		risk, _ := f["bottleneck_risk"].(string)
+		if risk != "low" && risk != "moderate" && risk != "high" && risk != "critical" {
+			risk = "moderate"
+		}
+		predFor := bucketNow.Add(time.Duration(hMin) * time.Minute)
+		_, _ = r.pool.Exec(ctx,
+			`INSERT INTO mobility.crowd_forecasts
+			   (h3_index, horizon_min, predicted_crowd_density, vehicle_pressure, animal_presence_score, bottleneck_risk, model_version, predicted_for)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT (h3_index, predicted_for, horizon_min, model_version) DO UPDATE SET
+			   predicted_crowd_density = EXCLUDED.predicted_crowd_density,
+			   bottleneck_risk = EXCLUDED.bottleneck_risk`,
+			h3Index, hMin, math.Min(1, math.Max(0, dens)), math.Min(1, math.Max(0, crowdDensity)), math.Min(1, math.Max(0, animalRisk)), risk, modelVersion, predFor,
+		)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) SaveUrbanSimulation(ctx context.Context, scenarioName, interventionType, h3Index string, intensityPct float64, baseline, projected, deltas map[string]any, summary string) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+	if summary == "" {
+		summary = "Urban What-If intervention evaluated."
+	}
+	paramsJSON, _ := json.Marshal(map[string]any{"intensity_pct": intensityPct, "deltas": deltas})
 	bJSON, _ := json.Marshal(baseline)
 	pJSON, _ := json.Marshal(projected)
-	dJSON, _ := json.Marshal(deltas)
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO mobility.urban_simulations
-		   (id, scenario_name, intervention_type, center, intensity_pct, baseline_metrics, projected_metrics, deltas)
-		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6, $7, $8, $9)`,
-		simID, scenarioName, interventionType, lon, lat, intensityPct, bJSON, pJSON, dJSON,
+		   (scenario_name, intervention_type, target_h3_indices, parameters, baseline_metrics, projected_metrics, net_impact_summary)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		scenarioName, interventionType, []string{h3Index}, paramsJSON, bJSON, pJSON, summary,
 	)
 	return err
 }
 
-func (r *PostgresRepository) SavePrivacyAggregateCell(ctx context.Context, cellID string, lat, lon float64, bucketStart time.Time, noisyCount, noisySpeed float64, kThreshold int, epsilon float64) error {
+func (r *PostgresRepository) SavePrivacyAggregateCell(ctx context.Context, h3Index string, bucketStart time.Time, rawCount, kThreshold int, epsilon float64, suppressed bool, noisedDensity, noisedSpeed float64) error {
 	if r == nil || r.pool == nil {
 		return nil
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO mobility.privacy_aggregated_flows
-		   (cell_id, centroid, bucket_start, noisy_device_count, noisy_avg_speed_kph, k_threshold, epsilon_budget)
-		 VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, $4, $5, $6, $7, $8)`,
-		cellID, lon, lat, bucketStart, noisyCount, noisySpeed, kThreshold, epsilon,
+		   (h3_index, bucket_start, k_anonymity_count, k_threshold, epsilon_budget, suppressed_below_k, noised_flow_density, noised_avg_speed_kph)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (h3_index, bucket_start) DO UPDATE SET
+		   k_anonymity_count = EXCLUDED.k_anonymity_count,
+		   suppressed_below_k = EXCLUDED.suppressed_below_k,
+		   noised_flow_density = EXCLUDED.noised_flow_density,
+		   noised_avg_speed_kph = EXCLUDED.noised_avg_speed_kph`,
+		h3Index, bucketStart, rawCount, kThreshold, epsilon, suppressed, noisedDensity, noisedSpeed,
 	)
 	return err
+}
+
+func (r *PostgresRepository) LoadPrivacySummary(ctx context.Context) (int, int, int, bool) {
+	if r == nil || r.pool == nil {
+		return 0, 0, 0, false
+	}
+	var pings, pub, supp int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(k_anonymity_count), 0)::int,
+		        COALESCE(COUNT(*) FILTER (WHERE NOT suppressed_below_k), 0)::int,
+		        COALESCE(COUNT(*) FILTER (WHERE suppressed_below_k), 0)::int
+		 FROM mobility.privacy_aggregated_flows`,
+	).Scan(&pings, &pub, &supp)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return pings, pub, supp, true
 }
 
 // Local thread-safe state used as deterministic fallback when Python ML brain is offline or unreachable.
@@ -130,7 +391,6 @@ func (s *Service) localCorridorSpeed(ctx context.Context, lat, lon float64) floa
 			return math.Round((sum/float64(len(segs)))*10) / 10
 		}
 	}
-	// Smooth diurnal baseline derived purely from timestamp.
 	hour := float64(time.Now().UTC().Add(5*time.Hour + 30*time.Minute).Hour())
 	peakFactor := math.Exp(-math.Pow(hour-9.5, 2)/6.0)*0.32 + math.Exp(-math.Pow(hour-18.5, 2)/7.0)*0.38
 	return math.Round(math.Max(14.0, 42.0*(1.0-peakFactor))*10) / 10
@@ -187,7 +447,26 @@ func computeFallbackPedestrianSafety(lat, lon, avgSpeedKPH, crowdDensity float64
 	}
 }
 
-func computeFallbackAnimalConflict(lat, lon, speedKPH float64, weather string) map[string]any {
+func (s *Service) nearbyAnimalZones(ctx context.Context, lat, lon float64) []map[string]any {
+	nearby := make([]map[string]any, 0)
+	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
+		if dbZones := dtRepo.LoadNearbyAnimalZones(ctx, lat, lon, 5000); len(dbZones) > 0 {
+			nearby = append(nearby, dbZones...)
+		}
+	}
+	twinFallback.mu.Lock()
+	for _, z := range twinFallback.animalZones {
+		zLat, _ := z["latitude"].(float64)
+		zLon, _ := z["longitude"].(float64)
+		if haversineMeters(lat, lon, zLat, zLon) <= 5000 {
+			nearby = append(nearby, z)
+		}
+	}
+	twinFallback.mu.Unlock()
+	return nearby
+}
+
+func (s *Service) computeAnimalConflict(ctx context.Context, lat, lon, speedKPH float64, weather string) map[string]any {
 	hour := time.Now().UTC().Add(5*time.Hour + 30*time.Minute).Hour()
 	twilight := 0.35
 	if (hour >= 5 && hour <= 7) || (hour >= 17 && hour <= 20) {
@@ -195,21 +474,13 @@ func computeFallbackAnimalConflict(lat, lon, speedKPH float64, weather string) m
 	} else if hour > 20 || hour < 5 {
 		twilight = 0.72
 	}
-	twinFallback.mu.Lock()
-	nearby := make([]map[string]any, 0)
+	nearby := s.nearbyAnimalZones(ctx, lat, lon)
 	maxZone := 0.0
-	for _, z := range twinFallback.animalZones {
-		zLat, _ := z["latitude"].(float64)
-		zLon, _ := z["longitude"].(float64)
-		if haversineMeters(lat, lon, zLat, zLon) <= 5000 {
-			nearby = append(nearby, z)
-			if r, ok := z["risk_score"].(float64); ok && r > maxZone {
-				maxZone = r
-			}
+	for _, z := range nearby {
+		if r, ok := z["risk_score"].(float64); ok && r > maxZone {
+			maxZone = r
 		}
 	}
-	twinFallback.mu.Unlock()
-
 	speedFactor := math.Min(1.0, math.Max(0.1, speedKPH/60.0))
 	baseRisk := math.Max(0.08, maxZone)
 	visPenalty := 0.0
@@ -236,17 +507,30 @@ func computeFallbackAnimalConflict(lat, lon, speedKPH float64, weather string) m
 	}
 }
 
-func computeFallbackRoadMemoryCorridor(lat, lon float64) []map[string]any {
-	twinFallback.mu.Lock()
-	defer twinFallback.mu.Unlock()
+func (s *Service) corridorRoadMemoryNodes(ctx context.Context, lat, lon, radiusM float64) []map[string]any {
 	out := make([]map[string]any, 0)
-	for _, node := range twinFallback.roadMemory {
-		nLat, _ := node["latitude"].(float64)
-		nLon, _ := node["longitude"].(float64)
-		if haversineMeters(lat, lon, nLat, nLon) <= 5000 {
+	seen := make(map[string]struct{})
+	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
+		for _, node := range dtRepo.LoadCorridorRoadMemory(ctx, lat, lon, radiusM) {
+			key, _ := node["condition_type"].(string)
+			h3, _ := node["h3_index"].(string)
+			seen[h3+":"+key] = struct{}{}
 			out = append(out, node)
 		}
 	}
+	twinFallback.mu.Lock()
+	for _, node := range twinFallback.roadMemory {
+		nLat, _ := node["latitude"].(float64)
+		nLon, _ := node["longitude"].(float64)
+		if haversineMeters(lat, lon, nLat, nLon) <= radiusM {
+			h3, _ := node["h3_index"].(string)
+			ct, _ := node["condition_type"].(string)
+			if _, exists := seen[h3+":"+ct]; !exists {
+				out = append(out, node)
+			}
+		}
+	}
+	twinFallback.mu.Unlock()
 	return out
 }
 
@@ -270,6 +554,26 @@ func (s *Service) GetDigitalTwinState(w http.ResponseWriter, r *http.Request) {
 			"weather":       weather,
 			"avg_speed_kph": avgSpeed,
 		}); okML {
+			if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
+				h3, _ := resp["h3_index"].(string)
+				health, _ := resp["system_health_index"].(float64)
+				cd, _ := resp["cross_domain"].(map[string]any)
+				crowdD, _ := cd["human_crowd_density"].(float64)
+				animalI, _ := cd["animal_conflict_index"].(float64)
+				ped, _ := resp["pedestrian_safety"].(map[string]any)
+				walkS, _ := ped["walk_safety_score"].(float64)
+				lightI, _ := ped["lighting_index"].(float64)
+				ci, _ := resp["crowd_intelligence"].(map[string]any)
+				rawFc, _ := ci["forecasts"].([]any)
+				fc := make([]map[string]any, 0, len(rawFc))
+				for _, item := range rawFc {
+					if m, okM := item.(map[string]any); okM {
+						fc = append(fc, m)
+					}
+				}
+				mv, _ := resp["model_version"].(string)
+				_ = dtRepo.SaveDigitalTwinSnapshot(r.Context(), h3, lat, lon, crowdD, health/100.0, avgSpeed, walkS, lightI, animalI, fc, mv)
+			}
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
@@ -283,10 +587,11 @@ func (s *Service) GetDigitalTwinState(w http.ResponseWriter, r *http.Request) {
 	}
 	crowdDensity := math.Round(math.Max(0.15, math.Min(0.95, 1.0-(avgSpeed/52.0)))*100) / 100
 	ped := computeFallbackPedestrianSafety(lat, lon, avgSpeed, crowdDensity, hazardsCount, weather)
-	animal := computeFallbackAnimalConflict(lat, lon, avgSpeed, weather)
-	nodes := computeFallbackRoadMemoryCorridor(lat, lon)
+	animal := s.computeAnimalConflict(r.Context(), lat, lon, avgSpeed, weather)
+	nodes := s.corridorRoadMemoryNodes(r.Context(), lat, lon, 5000)
 
 	pedScore, _ := ped["walk_safety_score"].(float64)
+	lightIdx, _ := ped["lighting_index"].(float64)
 	animalRisk, _ := animal["conflict_risk_score"].(float64)
 	health := math.Round(math.Max(20.0, math.Min(99.0,
 		0.40*(avgSpeed/45.0*100.0)+0.35*pedScore+0.25*((1.0-animalRisk)*100.0)))*10) / 10
@@ -298,8 +603,19 @@ func (s *Service) GetDigitalTwinState(w http.ResponseWriter, r *http.Request) {
 		dominant = "pedestrian_transit_surge"
 	}
 
+	forecasts := []map[string]any{
+		{"horizon_minutes": 15, "predicted_crowd_density": math.Round(math.Min(0.98, crowdDensity*1.04)*100) / 100, "bottleneck_risk": "moderate"},
+		{"horizon_minutes": 30, "predicted_crowd_density": math.Round(math.Min(0.98, crowdDensity*1.08)*100) / 100, "bottleneck_risk": "moderate"},
+		{"horizon_minutes": 60, "predicted_crowd_density": math.Round(math.Max(0.15, crowdDensity*0.92)*100) / 100, "bottleneck_risk": "low"},
+	}
+
+	h3 := spatialCellID(lat, lon)
+	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
+		_ = dtRepo.SaveDigitalTwinSnapshot(r.Context(), h3, lat, lon, crowdDensity, health/100.0, avgSpeed, pedScore, lightIdx, animalRisk, forecasts, "go-twin-fallback-v1")
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"h3_index":            spatialCellID(lat, lon),
+		"h3_index":            h3,
 		"system_health_index": health,
 		"cross_domain": map[string]any{
 			"human_crowd_density":      crowdDensity,
@@ -309,13 +625,9 @@ func (s *Service) GetDigitalTwinState(w http.ResponseWriter, r *http.Request) {
 			"dominant_interaction":     dominant,
 		},
 		"crowd_intelligence": map[string]any{
-			"h3_index":        spatialCellID(lat, lon),
+			"h3_index":        h3,
 			"current_density": crowdDensity,
-			"forecasts": []map[string]any{
-				{"horizon_minutes": 15, "predicted_crowd_density": math.Round(math.Min(0.98, crowdDensity*1.04)*100) / 100, "bottleneck_risk": "moderate"},
-				{"horizon_minutes": 30, "predicted_crowd_density": math.Round(math.Min(0.98, crowdDensity*1.08)*100) / 100, "bottleneck_risk": "moderate"},
-				{"horizon_minutes": 60, "predicted_crowd_density": math.Round(math.Max(0.15, crowdDensity*0.92)*100) / 100, "bottleneck_risk": "low"},
-			},
+			"forecasts":       forecasts,
 		},
 		"animal_conflict":   animal,
 		"pedestrian_safety": ped,
@@ -367,12 +679,13 @@ func (s *Service) SimulateUrbanIntervention(w http.ResponseWriter, r *http.Reque
 			"crowd_density":     crowd,
 		}); okML {
 			if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
-				simID := fmt.Sprintf("sim-%d", time.Now().UnixNano())
 				scen, _ := resp["scenario_name"].(string)
+				h3, _ := resp["h3_index"].(string)
 				baseMap, _ := resp["baseline_metrics"].(map[string]any)
 				projMap, _ := resp["projected_metrics"].(map[string]any)
 				deltaMap, _ := resp["deltas"].(map[string]any)
-				_ = dtRepo.SaveUrbanSimulation(r.Context(), simID, scen, req.InterventionType, req.Latitude, req.Longitude, req.IntensityPct, baseMap, projMap, deltaMap)
+				summary, _ := resp["net_impact_summary"].(string)
+				_ = dtRepo.SaveUrbanSimulation(r.Context(), scen, req.InterventionType, h3, req.IntensityPct, baseMap, projMap, deltaMap, summary)
 			}
 			writeJSON(w, http.StatusOK, resp)
 			return
@@ -411,7 +724,7 @@ func (s *Service) SimulateUrbanIntervention(w http.ResponseWriter, r *http.Reque
 		animalDelta = math.Round((-0.05*scale)*100) / 100
 		co2Red = math.Round((21.0*scale)*10) / 10
 		summary = "Dedicated transit lane stabilizes bus corridor headway and curb safety."
-	default: // signal_retime
+	default:
 		speedDelta = math.Round((5.8*scale)*10) / 10
 		crowdDeltaPct = math.Round((-12.0*scale)*10) / 10
 		pedDelta = math.Round((10.5*scale)*10) / 10
@@ -420,6 +733,7 @@ func (s *Service) SimulateUrbanIntervention(w http.ResponseWriter, r *http.Reque
 		summary = "Adaptive green-wave retiming reduces intersection queue dwell time."
 	}
 
+	h3 := spatialCellID(req.Latitude, req.Longitude)
 	basePed := computeFallbackPedestrianSafety(req.Latitude, req.Longitude, avgSpeed, crowd, 0, "clear")
 	basePedScore, _ := basePed["walk_safety_score"].(float64)
 	baseline := map[string]any{"avg_speed_kph": avgSpeed, "crowd_density": crowd, "walk_safety_score": basePedScore}
@@ -435,13 +749,14 @@ func (s *Service) SimulateUrbanIntervention(w http.ResponseWriter, r *http.Reque
 		"animal_conflict_delta":   animalDelta,
 		"co2_reduction_pct":       co2Red,
 	}
+	scenName := strings.ReplaceAll(req.InterventionType, "_", " ")
 	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
-		_ = dtRepo.SaveUrbanSimulation(r.Context(), fmt.Sprintf("sim-%d", time.Now().UnixNano()), req.InterventionType, req.InterventionType, req.Latitude, req.Longitude, req.IntensityPct, baseline, projected, deltas)
+		_ = dtRepo.SaveUrbanSimulation(r.Context(), scenName, req.InterventionType, h3, req.IntensityPct, baseline, projected, deltas, summary)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scenario_name":      strings.ReplaceAll(req.InterventionType, "_", " "),
+		"scenario_name":      scenName,
 		"intervention_type":  req.InterventionType,
-		"h3_index":           spatialCellID(req.Latitude, req.Longitude),
+		"h3_index":           h3,
 		"baseline_metrics":   baseline,
 		"projected_metrics":  projected,
 		"deltas":             deltas,
@@ -469,13 +784,14 @@ func (s *Service) GetCrowdForecast(w http.ResponseWriter, r *http.Request) {
 	}
 	speed := s.localCorridorSpeed(r.Context(), lat, lon)
 	cur := math.Round(math.Max(0.15, math.Min(0.95, 1.0-(speed/52.0)))*100) / 100
+	h3 := spatialCellID(lat, lon)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"h3_index":        spatialCellID(lat, lon),
+		"h3_index":        h3,
 		"current_density": cur,
 		"forecasts": []map[string]any{
-			{"h3_index": spatialCellID(lat, lon), "horizon_minutes": 15, "predicted_crowd_density": math.Round(math.Min(0.98, cur*1.05)*100) / 100, "bottleneck_risk": "moderate", "recommended_action": "Monitor station & feeder platform flow"},
-			{"h3_index": spatialCellID(lat, lon), "horizon_minutes": 30, "predicted_crowd_density": math.Round(math.Min(0.98, cur*1.09)*100) / 100, "bottleneck_risk": "moderate", "recommended_action": "Stagger departure by 10-15 min if flexibility allows"},
-			{"h3_index": spatialCellID(lat, lon), "horizon_minutes": 60, "predicted_crowd_density": math.Round(math.Max(0.15, cur*0.91)*100) / 100, "bottleneck_risk": "low", "recommended_action": "Density easing toward baseline"},
+			{"h3_index": h3, "horizon_minutes": 15, "predicted_crowd_density": math.Round(math.Min(0.98, cur*1.05)*100) / 100, "bottleneck_risk": "moderate", "recommended_action": "Monitor station & feeder platform flow"},
+			{"h3_index": h3, "horizon_minutes": 30, "predicted_crowd_density": math.Round(math.Min(0.98, cur*1.09)*100) / 100, "bottleneck_risk": "moderate", "recommended_action": "Stagger departure by 10-15 min if flexibility allows"},
+			{"h3_index": h3, "horizon_minutes": 60, "predicted_crowd_density": math.Round(math.Max(0.15, cur*0.91)*100) / 100, "bottleneck_risk": "low", "recommended_action": "Density easing toward baseline"},
 		},
 	})
 }
@@ -498,7 +814,7 @@ func (s *Service) GetAnimalConflict(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, computeFallbackAnimalConflict(lat, lon, speed, "clear"))
+	writeJSON(w, http.StatusOK, s.computeAnimalConflict(r.Context(), lat, lon, speed, "clear"))
 }
 
 // ReportAnimalSighting handles POST /move/safety/animal-sighting.
@@ -518,18 +834,15 @@ func (s *Service) ReportAnimalSighting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "valid latitude and longitude are required", false)
 		return
 	}
-	if req.SpeciesGroup == "" {
-		req.SpeciesGroup = "stray_cattle_or_dog"
-	}
-	if req.CorridorType == "" {
-		req.CorridorType = "peri_urban_verge"
-	}
+	species := normalizeSpeciesGroup(req.SpeciesGroup)
+	corridor := normalizeCorridorType(req.CorridorType)
 	if req.Severity <= 0 {
 		req.Severity = 0.72
 	}
+	advisory := fmt.Sprintf("Recent %s sighting near %s; stay alert.", strings.ReplaceAll(species, "_", " "), strings.ReplaceAll(corridor, "_", " "))
 
 	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
-		_ = dtRepo.SaveAnimalSighting(r.Context(), req.Latitude, req.Longitude, spatialCellID(req.Latitude, req.Longitude), req.SpeciesGroup, req.CorridorType, req.Severity)
+		_ = dtRepo.SaveAnimalSighting(r.Context(), req.Latitude, req.Longitude, spatialCellID(req.Latitude, req.Longitude), species, corridor, req.Severity, advisory)
 	}
 	if s.ml != nil {
 		if resp, okML := s.ml.PostJSON(r.Context(), "/v1/safety/animal-sighting", req); okML {
@@ -542,9 +855,10 @@ func (s *Service) ReportAnimalSighting(w http.ResponseWriter, r *http.Request) {
 		"h3_index":      spatialCellID(req.Latitude, req.Longitude),
 		"latitude":      req.Latitude,
 		"longitude":     req.Longitude,
-		"species_group": req.SpeciesGroup,
-		"corridor_type": req.CorridorType,
+		"species_group": species,
+		"corridor_type": corridor,
 		"risk_score":    math.Round(math.Min(0.98, req.Severity)*100) / 100,
+		"advisory":      advisory,
 		"reported_at":   time.Now().UTC().Format(time.RFC3339),
 	}
 	twinFallback.mu.Lock()
@@ -626,14 +940,19 @@ func (s *Service) ObserveRoadMemory(w http.ResponseWriter, r *http.Request) {
 				if v, okV := nodeMap["confidence"].(float64); okV {
 					conf = v
 				}
-				_ = dtRepo.SaveRoadMemoryObservation(r.Context(), req.Latitude, req.Longitude, cellID, req.ConditionType, req.Severity, obsCnt, conf)
+				h3, _ := nodeMap["h3_index"].(string)
+				if h3 == "" {
+					h3 = cellID
+				}
+				_ = dtRepo.SaveRoadMemoryObservation(r.Context(), req.Latitude, req.Longitude, h3, req.ConditionType, req.Severity, obsCnt, conf)
 			}
 			writeJSON(w, http.StatusCreated, resp)
 			return
 		}
 	}
 
-	key := cellID + ":" + strings.ToLower(req.ConditionType)
+	cond := normalizeRoadCondition(req.ConditionType)
+	key := cellID + ":" + cond
 	twinFallback.mu.Lock()
 	existing, ok := twinFallback.roadMemory[key]
 	obsCount := 1
@@ -651,7 +970,7 @@ func (s *Service) ObserveRoadMemory(w http.ResponseWriter, r *http.Request) {
 		"h3_index":          cellID,
 		"latitude":          req.Latitude,
 		"longitude":         req.Longitude,
-		"condition_type":    strings.ToLower(req.ConditionType),
+		"condition_type":    cond,
 		"severity":          math.Round(req.Severity*100) / 100,
 		"observation_count": obsCount,
 		"quorum_verified":   obsCount >= 2,
@@ -662,7 +981,7 @@ func (s *Service) ObserveRoadMemory(w http.ResponseWriter, r *http.Request) {
 	twinFallback.mu.Unlock()
 
 	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
-		_ = dtRepo.SaveRoadMemoryObservation(r.Context(), req.Latitude, req.Longitude, cellID, req.ConditionType, req.Severity, obsCount, conf)
+		_ = dtRepo.SaveRoadMemoryObservation(r.Context(), req.Latitude, req.Longitude, cellID, cond, req.Severity, obsCount, conf)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"node": node, "model_version": "go-road-memory-v1"})
 }
@@ -674,18 +993,20 @@ func (s *Service) GetRoadMemoryCorridor(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "valid lat and lon query params are required", false)
 		return
 	}
-	radiusM := r.URL.Query().Get("radius_m")
-	if radiusM == "" {
-		radiusM = "5000"
+	radiusM := 5000.0
+	if rStr := r.URL.Query().Get("radius_m"); rStr != "" {
+		if parsed, err := strconv.ParseFloat(rStr, 64); err == nil && parsed > 0 {
+			radiusM = parsed
+		}
 	}
 	if s.ml != nil {
-		if resp, okML := s.ml.GetJSON(r.Context(), fmt.Sprintf("/v1/road-memory/corridor?lat=%.6f&lon=%.6f&radius_m=%s", lat, lon, radiusM)); okML {
+		if resp, okML := s.ml.GetJSON(r.Context(), fmt.Sprintf("/v1/road-memory/corridor?lat=%.6f&lon=%.6f&radius_m=%.0f", lat, lon, radiusM)); okML {
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"nodes":         computeFallbackRoadMemoryCorridor(lat, lon),
+		"nodes":         s.corridorRoadMemoryNodes(r.Context(), lat, lon, radiusM),
 		"model_version": "go-road-memory-v1",
 	})
 }
@@ -713,20 +1034,32 @@ func (s *Service) AggregatePrivacyTelemetry(w http.ResponseWriter, r *http.Reque
 		req.Epsilon = 1.0
 	}
 
+	bucket := time.Now().UTC().Truncate(15 * time.Minute)
 	if s.ml != nil {
 		if resp, okML := s.ml.PostJSON(r.Context(), "/v1/privacy/aggregate", req); okML {
+			if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
+				if rawCells, okC := resp["cells"].([]any); okC {
+					for _, item := range rawCells {
+						m, okM := item.(map[string]any)
+						if !okM {
+							continue
+						}
+						h3, _ := m["h3_index"].(string)
+						cnt, _ := m["noisy_device_count"].(float64)
+						spd, _ := m["noisy_avg_speed_kph"].(float64)
+						_ = dtRepo.SavePrivacyAggregateCell(r.Context(), h3, bucket, int(math.Round(cnt)), req.KMin, req.Epsilon, false, cnt, spd)
+					}
+				}
+			}
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 	}
 
-	// Deterministic k-anonymity aggregation & Laplace noise fallback
-	bucket := time.Now().UTC().Truncate(15 * time.Minute)
 	type cellAcc struct {
-		latSum, lonSum float64
-		speeds         []float64
-		tokens         map[string]struct{}
-		count          int
+		speeds []float64
+		tokens map[string]struct{}
+		count  int
 	}
 	buckets := make(map[string]*cellAcc)
 	for i, sample := range req.Samples {
@@ -739,8 +1072,6 @@ func (s *Service) AggregatePrivacyTelemetry(w http.ResponseWriter, r *http.Reque
 			acc = &cellAcc{tokens: make(map[string]struct{})}
 			buckets[cid] = acc
 		}
-		acc.latSum += sample.Latitude
-		acc.lonSum += sample.Longitude
 		acc.count++
 		tok := sample.EphemeralToken
 		if tok == "" {
@@ -755,13 +1086,15 @@ func (s *Service) AggregatePrivacyTelemetry(w http.ResponseWriter, r *http.Reque
 
 	published := make([]map[string]any, 0)
 	suppressedCount := 0
+	dtRepo, hasDtRepo := s.repo.(DigitalTwinRepository)
 	for cid, acc := range buckets {
 		if len(acc.tokens) < req.KMin {
 			suppressedCount++
+			if hasDtRepo {
+				_ = dtRepo.SavePrivacyAggregateCell(r.Context(), cid, bucket, len(acc.tokens), req.KMin, req.Epsilon, true, 0, 0)
+			}
 			continue
 		}
-		cLat := acc.latSum / float64(acc.count)
-		cLon := acc.lonSum / float64(acc.count)
 		avgSpd := 28.0
 		if len(acc.speeds) > 0 {
 			var sSum float64
@@ -770,7 +1103,6 @@ func (s *Service) AggregatePrivacyTelemetry(w http.ResponseWriter, r *http.Reque
 			}
 			avgSpd = sSum / float64(len(acc.speeds))
 		}
-		// Bounded Laplace jitter using deterministic uniform seed from timestamp+cell
 		seedHash := sha256.Sum256([]byte(cid + bucket.Format(time.RFC3339)))
 		u := (float64(seedHash[0])/255.0 - 0.5) * 0.85
 		scale := 1.0 / math.Max(0.2, req.Epsilon)
@@ -780,8 +1112,8 @@ func (s *Service) AggregatePrivacyTelemetry(w http.ResponseWriter, r *http.Reque
 		}
 		lapNoise := -scale * sgn * math.Log(1.0-2.0*math.Abs(u))
 		noisyCount := math.Round(math.Max(float64(req.KMin), float64(len(acc.tokens))+lapNoise)*10) / 10
-		if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
-			_ = dtRepo.SavePrivacyAggregateCell(r.Context(), cid, cLat, cLon, bucket, noisyCount, avgSpd, req.KMin, req.Epsilon)
+		if hasDtRepo {
+			_ = dtRepo.SavePrivacyAggregateCell(r.Context(), cid, bucket, len(acc.tokens), req.KMin, req.Epsilon, false, noisyCount, avgSpd)
 		}
 		published = append(published, map[string]any{
 			"h3_index":            cid,
@@ -821,13 +1153,27 @@ func (s *Service) GetPrivacyStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	twinFallback.mu.Lock()
-	defer twinFallback.mu.Unlock()
+	k := twinFallback.kThreshold
+	eps := twinFallback.epsilonBudget
+	pings := twinFallback.totalPings
+	pub := twinFallback.published
+	supp := twinFallback.suppressed
+	twinFallback.mu.Unlock()
+
+	if dtRepo, okRepo := s.repo.(DigitalTwinRepository); okRepo {
+		if dbPings, dbPub, dbSupp, okDB := dtRepo.LoadPrivacySummary(r.Context()); okDB {
+			pings += dbPings
+			pub += dbPub
+			supp += dbSupp
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"k_threshold":            twinFallback.kThreshold,
-		"epsilon_budget":         twinFallback.epsilonBudget,
-		"total_pings_processed":  twinFallback.totalPings,
-		"total_cells_published":  twinFallback.published,
-		"total_cells_suppressed": twinFallback.suppressed,
+		"k_threshold":            k,
+		"epsilon_budget":         eps,
+		"total_pings_processed":  pings,
+		"total_cells_published":  pub,
+		"total_cells_suppressed": supp,
 		"model_version":          "go-privacy-shield-v1",
 	})
 }
@@ -857,7 +1203,7 @@ func (s *Service) GetProactiveBrief(w http.ResponseWriter, r *http.Request) {
 	speed := s.localCorridorSpeed(r.Context(), lat, lon)
 	crowd := math.Round(math.Max(0.15, math.Min(0.95, 1.0-(speed/52.0)))*100) / 100
 	ped := computeFallbackPedestrianSafety(lat, lon, speed, crowd, 0, weather)
-	animal := computeFallbackAnimalConflict(lat, lon, speed, weather)
+	animal := s.computeAnimalConflict(r.Context(), lat, lon, speed, weather)
 	pedScore, _ := ped["walk_safety_score"].(float64)
 	animalRisk, _ := animal["conflict_risk_score"].(float64)
 	health := math.Round(math.Max(20.0, math.Min(99.0,
@@ -898,7 +1244,6 @@ func (s *Service) GetProactiveBrief(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// corridorSafetyContext summarizes walk/animal/road-memory safety for PlanJourney scoring.
 type corridorSafetyContext struct {
 	PedestrianSafetyScore float64
 	AnimalConflictRisk    float64
@@ -908,8 +1253,8 @@ type corridorSafetyContext struct {
 
 func (s *Service) assessCorridorSafety(ctx context.Context, lat, lon float64, avgSpeed float64, hazardsCount int) corridorSafetyContext {
 	ped := computeFallbackPedestrianSafety(lat, lon, avgSpeed, math.Max(0.15, math.Min(0.95, 1.0-(avgSpeed/52.0))), hazardsCount, "clear")
-	animal := computeFallbackAnimalConflict(lat, lon, avgSpeed, "clear")
-	nodes := computeFallbackRoadMemoryCorridor(lat, lon)
+	animal := s.computeAnimalConflict(ctx, lat, lon, avgSpeed, "clear")
+	nodes := s.corridorRoadMemoryNodes(ctx, lat, lon, 5000)
 
 	pedScore, _ := ped["walk_safety_score"].(float64)
 	animalRisk, _ := animal["conflict_risk_score"].(float64)

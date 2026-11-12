@@ -36,7 +36,7 @@ class MobilityDemandForecaster:
         if not target_cells and latitude is not None and longitude is not None:
             target_cells = [latlon_to_h3(latitude, longitude, 8)]
         if not target_cells:
-            target_cells = [latlon_to_h3(17.385, 78.486, 8)]
+            return {"zones": [], "model_version": self.model_version, "horizons_min": self.horizons}
 
         weather_boost = 1.25 if weather.lower() in ("rain", "heavy_rain", "monsoon") or rain_mm > 2.0 else 1.0
 

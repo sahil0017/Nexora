@@ -11,6 +11,8 @@ import AssistantScreen from '../../features/assistant/screens/AssistantScreen';
 import ProfileScreen from '../../features/profile/screens/ProfileScreen';
 import MobilityNavigator from '../../features/move/MobilityNavigator';
 import ModuleOverviewScreen from '../../features/explore/screens/ModuleOverviewScreen';
+import FinanceNavigator from '../../features/finance/FinanceNavigator';
+import PrivacyPermissionsScreen from '../../features/privacy/screens/PrivacyPermissionsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -58,6 +60,8 @@ export default function RootNavigator() {
       <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
         <Stack.Screen name="Tabs" component={Tabs} />
         <Stack.Screen name="Mobility" component={MobilityNavigator} />
+        <Stack.Screen name="Finance" component={FinanceNavigator} />
+        <Stack.Screen name="PrivacyPermissions" component={PrivacyPermissionsScreen} />
         <Stack.Screen name="ModuleHub" component={ModuleOverviewScreen} />
       </Stack.Navigator>
     </NavigationContainer>
