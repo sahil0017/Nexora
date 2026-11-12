@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -486,5 +487,69 @@ func TestDynamicHistoricCallLogsImportAndInsights(t *testing.T) {
 	normalizeConversationIRForPersist(&emptyIR)
 	if emptyIR.DetectedLanguages == nil || len(emptyIR.DetectedLanguages) == 0 || emptyIR.Topics == nil || emptyIR.ConfidenceTier == "" || emptyIR.Recording.QualityReport.RoutingStrategy == "" {
 		t.Fatalf("normalizeConversationIRForPersist failed to initialize required non-null Postgres fields: %+v", emptyIR)
+	}
+
+	// 4. Verify normalizeConversationSlicesForJSON converts nil JSON slices into [] (no null crashes on clients)
+	var sliceIR ConversationIR
+	sliceIR.Evidence = &EvidenceRecord{}
+	normalizeConversationSlicesForJSON(&sliceIR)
+	rawJSON, err := json.Marshal(sliceIR)
+	if err != nil {
+		t.Fatalf("failed to marshal normalized IR: %v", err)
+	}
+	if strings.Contains(string(rawJSON), `"human_corrections":null`) ||
+		strings.Contains(string(rawJSON), `"utterances":null`) ||
+		strings.Contains(string(rawJSON), `"action_suggestions":null`) ||
+		strings.Contains(string(rawJSON), `"custody_events":null`) {
+		t.Fatalf("expected non-null empty arrays in JSON payload, got: %s", string(rawJSON))
+	}
+
+	// 5. Verify GET /voice/conversations/{id}/download returns downloadable transcript artifact when audio bytes are absent
+	wStart := httptest.NewRecorder()
+	r.ServeHTTP(wStart, httptest.NewRequest(http.MethodPost, "/voice/sessions/start", bytes.NewBufferString(`{"title":"Client Call","source_type":"call"}`)))
+	if wStart.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created on POST /voice/sessions/start, got %d: %s", wStart.Code, wStart.Body.String())
+	}
+	var startResp struct {
+		SessionID      string `json:"session_id"`
+		ConversationID string `json:"conversation_id"`
+	}
+	_ = json.Unmarshal(wStart.Body.Bytes(), &startResp)
+	if startResp.ConversationID == "" {
+		t.Fatalf("expected non-empty conversation_id from StartSession, got: %s", wStart.Body.String())
+	}
+
+	wGet := httptest.NewRecorder()
+	r.ServeHTTP(wGet, httptest.NewRequest(http.MethodGet, "/voice/conversations/"+startResp.ConversationID, nil))
+	if wGet.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on GET /voice/conversations/{id}, got %d: %s", wGet.Code, wGet.Body.String())
+	}
+	var convResp struct {
+		ConversationID string `json:"conversation_id"`
+		Recording      struct {
+			RecordingID string `json:"recording_id"`
+		} `json:"recording"`
+	}
+	_ = json.Unmarshal(wGet.Body.Bytes(), &convResp)
+
+	wDl := httptest.NewRecorder()
+	r.ServeHTTP(wDl, httptest.NewRequest(http.MethodGet, "/voice/conversations/"+startResp.ConversationID+"/download", nil))
+	if wDl.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on GET /voice/conversations/{id}/download, got %d: %s", wDl.Code, wDl.Body.String())
+	}
+	if !strings.Contains(wDl.Header().Get("Content-Disposition"), "attachment;") {
+		t.Fatalf("expected attachment Content-Disposition, got %q", wDl.Header().Get("Content-Disposition"))
+	}
+	if !strings.Contains(wDl.Body.String(), "Client Call") {
+		t.Fatalf("expected downloaded transcript to contain conversation title, got %s", wDl.Body.String())
+	}
+
+	wPresignDl := httptest.NewRecorder()
+	r.ServeHTTP(wPresignDl, httptest.NewRequest(http.MethodGet, "/voice/recordings/"+convResp.Recording.RecordingID+"/presign-download", nil))
+	if wPresignDl.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on presign-download, got %d: %s", wPresignDl.Code, wPresignDl.Body.String())
+	}
+	if !strings.Contains(wPresignDl.Body.String(), `"transcript_download_url"`) {
+		t.Fatalf("expected transcript_download_url in presign-download response, got %s", wPresignDl.Body.String())
 	}
 }

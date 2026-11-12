@@ -38,11 +38,13 @@ export function Tappable({
   children,
   onPress,
   style,
+  containerStyle,
   accessibilityLabel,
 }: {
   children: React.ReactNode;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
+  containerStyle?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
 }) {
   const s = useRef(new Animated.Value(1)).current;
@@ -53,6 +55,7 @@ export function Tappable({
       onPress={onPress}
       onPressIn={() => to(0.97)}
       onPressOut={() => to(1)}
+      style={containerStyle}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}>
       <Animated.View style={[style, { transform: [{ scale: s }] }]}>{children}</Animated.View>

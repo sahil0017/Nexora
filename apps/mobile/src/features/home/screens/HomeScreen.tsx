@@ -300,36 +300,86 @@ export default function HomeScreen() {
         </Card>
       </FadeIn>
 
-      {/* Voice Intelligence Entry Card */}
-      <SectionHeading title="Voice Intelligence" action="Open Voice →" onActionPress={() => openVoice('VoiceCapture')} />
+      {/* Flagship Voice & Conversations Entry Card */}
+      <SectionHeading title="Voice & Conversations" action="Open Library →" onActionPress={() => openVoice('VoiceCapture')} />
       <FadeIn index={2}>
         <Card variant="featured" style={{ gap: spacing.s }}>
-          <Tappable onPress={() => openVoice('VoiceCapture')} accessibilityLabel="Open Voice Intelligence">
+          <Tappable onPress={() => openVoice('VoiceCapture')} accessibilityLabel="Open Voice & Call Notes">
             <View style={styles.between}>
               <View style={styles.modTitleRow}>
                 <View style={[styles.moduleIcon, { backgroundColor: 'rgba(167, 139, 250, 0.18)' }]}>
-                  <Text style={{ color: moduleColors.voice, fontSize: 15, fontWeight: '700' }}>◉</Text>
+                  <Text style={{ color: moduleColors.voice, fontSize: 16, fontWeight: '700' }}>◉</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.mobilityHeading}>Voice Intelligence</Text>
+                  <Text style={styles.mobilityHeading}>Voice & Call Notes</Text>
                   <Text style={styles.mobilitySub} numberOfLines={2}>
-                    Speaker IR, commitments, contradictions & cryptographic custody
+                    Transcripts, speaker insights, follow-ups & caller ID
                   </Text>
                 </View>
               </View>
               <StatusPill
-                label={`${voiceOverview.data?.conversation_count ?? 1} IR`}
-                tone="info"
+                label={
+                  voiceOverview.data
+                    ? voiceOverview.data.pending_approvals > 0
+                      ? `${voiceOverview.data.pending_approvals} TASK${voiceOverview.data.pending_approvals > 1 ? 'S' : ''}`
+                      : 'SYNCED'
+                    : 'SYNCING'
+                }
+                tone={
+                  voiceOverview.data
+                    ? voiceOverview.data.pending_approvals > 0
+                      ? 'warning'
+                      : 'success'
+                    : 'info'
+                }
               />
             </View>
           </Tappable>
-          <View style={styles.mobShortcutRow}>
-            <Chip label="🎙 Capture" active color={moduleColors.voice} onPress={() => openVoice('VoiceCapture')} />
-            <Chip label="📝 Transcript" onPress={() => openVoice('VoiceTranscript')} />
-            <Chip label="🧠 Memory & QA" onPress={() => openVoice('VoiceMemory')} />
-            <Chip label="🔒 Evidence" onPress={() => openVoice('VoiceEvidence')} />
+
+          <View style={styles.mobStatsRow}>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: moduleColors.voice }]}>
+                {voiceOverview.data ? voiceOverview.data.conversation_count : 'Syncing'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Conversations</Text>
+            </View>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: colors.accentBright }]}>
+                {voiceOverview.data ? voiceOverview.data.commitments_decisions : '—'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Key decisions</Text>
+            </View>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: colors.textPrimary }]}>
+                {voiceOverview.data ? voiceOverview.data.pending_approvals : '—'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Pending tasks</Text>
+            </View>
           </View>
-          <PrimaryButton title="Open Voice Workspace" onPress={() => openVoice('VoiceCapture')} />
+
+          <View
+            style={[
+              styles.preTravelPill,
+              {
+                backgroundColor: 'rgba(167, 139, 250, 0.10)',
+                borderColor: 'rgba(167, 139, 250, 0.28)',
+              },
+            ]}>
+            <Text style={[styles.preTravelText, { color: moduleColors.voice }]} numberOfLines={2}>
+              {voiceOverview.data?.conversations?.length
+                ? `💬 Latest: ${voiceOverview.data.conversations[0].title} (${voiceOverview.data.conversations[0].utterances?.length ?? 0} lines)`
+                : '🎙 Save call notes, import audio or sync device call history privately'}
+            </Text>
+          </View>
+
+          <View style={styles.mobShortcutRow}>
+            <Chip label="📚 Library" active color={moduleColors.voice} onPress={() => openVoice('VoiceCapture')} />
+            <Chip label="📝 Transcripts" onPress={() => openVoice('VoiceTranscript')} />
+            <Chip label="💬 Ask AI" onPress={() => openVoice('VoiceMemory')} />
+            <Chip label="✓ Follow-ups" onPress={() => openVoice('VoiceActions')} />
+          </View>
+
+          <PrimaryButton title="Open Voice Library" onPress={() => openVoice('VoiceCapture')} />
         </Card>
       </FadeIn>
 

@@ -76,26 +76,26 @@ export const PERMISSION_CATALOG: PermissionDescriptor[] = [
   {
     key: 'voiceMicCapture',
     domain: 'Voice',
-    title: 'Voice Capture & Recording Import',
-    description: 'Allows capturing meetings, calls, or imported audio recordings into encrypted Voice Intelligence storage.',
-    dataHandled: 'Original audio sealed with SHA-256 & HMAC; explicit consent required per capture.',
+    title: 'Microphone & Audio Import',
+    description: 'Allows saving voice notes, calls, and imported recordings into encrypted NEXORA storage.',
+    dataHandled: 'Original files stay sealed and protected; explicit permission is required.',
     recommended: true,
   },
   {
     key: 'voiceConversationMemory',
     domain: 'Voice',
-    title: 'Conversational Knowledge & Memory Graph',
-    description: 'Extracts commitments, entities, and cross-conversation memory with source-grounded citations.',
-    dataHandled: 'PII scrubbed before model inference; human corrections logged immutably.',
+    title: 'Conversation Memory & Insights',
+    description: 'Finds commitments, action items, people, and topics with exact transcript quotes.',
+    dataHandled: 'Sensitive details are masked before AI analysis; transcript edits stay tracked.',
     recommended: true,
   },
   {
     key: 'deviceCallLogsRead',
     domain: 'Voice',
-    title: 'Device Historic Call Logs',
+    title: 'Phone Call History',
     description:
-      'Reads your device call history (number, contact name, direction, duration & timestamp) strictly when you tap Sync Device CallLog.',
-    dataHandled: 'Phone numbers are SHA-256 hashed and masked; raw numbers are never stored in plain text.',
+      'Reads device call history (number, contact name, duration & time) strictly when you tap Sync Device Calls.',
+    dataHandled: 'Phone numbers are hashed and masked; raw numbers are never stored in plain text.',
     recommended: false,
   },
   {
@@ -103,8 +103,8 @@ export const PERMISSION_CATALOG: PermissionDescriptor[] = [
     domain: 'Voice',
     title: 'Live Caller ID & Call Screening',
     description:
-      'Allows Android CallScreeningService and iOS Call Directory Extension to identify callers and warn on spam.',
-    dataHandled: 'Uses your local Caller Intelligence DB first (₹0 cost); unknown numbers prompt post-call.',
+      'Uses Android Call Screening and iOS Call Directory to label callers and flag potential spam.',
+    dataHandled: 'Checks your local contact directory first; lets you label unknown callers anytime.',
     recommended: true,
   },
 ];

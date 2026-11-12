@@ -18,7 +18,7 @@ import { useMe } from '../../../core/auth/useMe';
 const MODULE_INFO: Record<string, { label: string; desc: string }> = {
   move: { label: 'Mobility & Navigation', desc: 'Turn-by-turn routes, live traffic, places & alerts' },
   finance: { label: 'Wealth & Finance', desc: 'Net worth, accounts, tax planning & portfolio insights' },
-  voice: { label: 'Voice Intelligence', desc: 'Capture, speaker IR, reasoning, memory & verifiable custody' },
+  voice: { label: 'Voice & Call Notes', desc: 'Call transcripts, meeting notes, follow-ups & caller ID' },
   assistant: { label: 'Copilot', desc: 'Personal AI assistant for commute, wealth & daily tasks' },
   health: { label: 'Health', desc: 'Reports, wellness records & health insights' },
   work: { label: 'Work', desc: 'Tasks, morning briefs & schedule automation' },

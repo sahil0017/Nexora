@@ -802,13 +802,74 @@ func (p *PostgresRepository) loadConversationsBatch(ctx context.Context, userID 
 	out := make([]ConversationIR, 0, len(ordered))
 	for _, cid := range ordered {
 		c := byID[cid]
+		normalizeConversationSlicesForJSON(c)
 		c.InteractionEdges = ResolveGoInteractionDynamics(c.Utterances, c.Participants)
+		if c.InteractionEdges == nil {
+			c.InteractionEdges = []InteractionEdgeIR{}
+		}
 		if c.Evidence != nil {
+			if c.Evidence.CustodyEvents == nil {
+				c.Evidence.CustodyEvents = []CustodyEvent{}
+			}
 			c.Evidence.ChainValid = vault.VerifyCustodyChain(c.Evidence.CustodyEvents)
 		}
 		out = append(out, *c)
 	}
 	return out, nil
+}
+
+func normalizeConversationSlicesForJSON(c *ConversationIR) {
+	if c == nil {
+		return
+	}
+	if c.DetectedLanguages == nil {
+		c.DetectedLanguages = []string{}
+	}
+	if c.Topics == nil {
+		c.Topics = []string{}
+	}
+	if c.Participants == nil {
+		c.Participants = []ParticipantIR{}
+	}
+	if c.Utterances == nil {
+		c.Utterances = []UtteranceIR{}
+	}
+	if c.ConversationEvents == nil {
+		c.ConversationEvents = []ConversationEventIR{}
+	}
+	if c.ExtractedKnowledge.Entities == nil {
+		c.ExtractedKnowledge.Entities = []KnowledgeEntityIR{}
+	}
+	if c.ExtractedKnowledge.Edges == nil {
+		c.ExtractedKnowledge.Edges = []KnowledgeEdgeIR{}
+	}
+	if c.ReasoningResults == nil {
+		c.ReasoningResults = []ReasoningResultIR{}
+	}
+	if c.ActionSuggestions == nil {
+		c.ActionSuggestions = []ActionSuggestionIR{}
+	}
+	if c.HumanCorrections == nil {
+		c.HumanCorrections = []HumanCorrectionIR{}
+	}
+	if c.SourceEvidenceRefs == nil {
+		c.SourceEvidenceRefs = []SourceEvidenceRef{}
+	}
+	if c.ModelTelemetry == nil {
+		c.ModelTelemetry = []ModelTelemetryIR{}
+	}
+	if c.InteractionEdges == nil {
+		c.InteractionEdges = []InteractionEdgeIR{}
+	}
+	if c.Recording.QualityReport.VadSegments == nil {
+		c.Recording.QualityReport.VadSegments = []VadSegment{}
+	}
+	if c.Recording.QualityReport.Warnings == nil {
+		c.Recording.QualityReport.Warnings = []string{}
+	}
+	if c.Evidence != nil && c.Evidence.CustodyEvents == nil {
+		c.Evidence.CustodyEvents = []CustodyEvent{}
+	}
 }
 
 func nonNilStrings(in []string, fallback ...string) []string {

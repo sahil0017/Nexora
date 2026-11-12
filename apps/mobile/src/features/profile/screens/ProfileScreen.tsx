@@ -217,13 +217,13 @@ export default function ProfileScreen() {
             style={styles.moduleRow}>
             <View style={{ flex: 1 }}>
               <View style={styles.rowInline}>
-                <Text style={styles.rowTitle}>Voice Intelligence & Caller ID</Text>
+                <Text style={styles.rowTitle}>Voice & Call Notes</Text>
                 <StatusPill label="LIVE" tone="success" />
               </View>
               <Text style={styles.sub}>
                 {voiceOverview.data
-                  ? `${voiceOverview.data.conversation_count} convs · ${voiceOverview.data.pending_approvals} pending approvals · ${voiceInsights.data?.total_calls ?? 0} call logs`
-                  : '10-workstream speaker IR, call logs & cryptographic custody'}
+                  ? `${voiceOverview.data.conversation_count} conversations · ${voiceOverview.data.pending_approvals} follow-ups · ${voiceInsights.data?.total_calls ?? 0} calls`
+                  : 'Transcripts, call history, caller ID & verified records'}
               </Text>
             </View>
             <Text style={[styles.chevron, { color: moduleColors.voice }]}>Open ›</Text>
@@ -262,7 +262,7 @@ export default function ProfileScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Privacy & Data Access Permissions</Text>
               <Text style={styles.sub}>
-                Control GPS, Bank/UPI Alerts, Voice, CallLogs & Screening ({activePermsCount}/{totalPermsCount} active)
+                Control GPS, Bank/UPI Alerts, Mic, Call History & Caller ID ({activePermsCount}/{totalPermsCount} active)
               </Text>
             </View>
             <StatusPill

@@ -89,6 +89,7 @@ func Mount(r chi.Router, svc *Service) {
 		v.Post("/sessions/{id}/state", svc.UpdateSessionState)
 		v.Post("/sessions/{id}/finalize", svc.FinalizeSession)
 		v.Get("/conversations/{id}", svc.GetConversation)
+		v.Get("/conversations/{id}/download", svc.DownloadConversationArtifact)
 		v.Post("/conversations/{id}/process", svc.ReprocessConversation)
 		v.Post("/conversations/{id}/corrections", svc.AddCorrection)
 		v.Post("/conversations/{id}/caller", svc.BindCaller)
@@ -1549,16 +1550,86 @@ func (s *Service) PresignRecordingDownload(w http.ResponseWriter, r *http.Reques
 	if key == "" {
 		key = s.presigner.ObjectKey(userID, ir.ConversationID, recID, "wav")
 	}
+	s.localObjMu.RLock()
+	_, hasLocalObj := s.localObjects[key]
+	s.localObjMu.RUnlock()
+	hasAudio := hasLocalObj || (ir.Recording.S3PresignedStatus == "uploaded" && s.presigner.IsS3Configured())
 	dlURL, mode := s.presigner.PresignGet(key, 10*time.Minute)
+	if !hasLocalObj && !s.presigner.IsS3Configured() {
+		dlURL = fmt.Sprintf("/api/v1/voice/conversations/%s/download", ir.ConversationID)
+		mode = "transcript_archive"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"recording_id":        recID,
-		"conversation_id":     ir.ConversationID,
-		"s3_bucket":           ir.Recording.S3Bucket,
-		"s3_object_key":       key,
-		"s3_presigned_status": ir.Recording.S3PresignedStatus,
-		"storage_uri":         ir.Recording.StorageURI,
-		"download_url":        dlURL,
-		"storage_mode":        mode,
-		"expires_in_sec":      600,
+		"recording_id":            recID,
+		"conversation_id":         ir.ConversationID,
+		"s3_bucket":               ir.Recording.S3Bucket,
+		"s3_object_key":           key,
+		"s3_presigned_status":     ir.Recording.S3PresignedStatus,
+		"storage_uri":             ir.Recording.StorageURI,
+		"download_url":            dlURL,
+		"transcript_download_url": fmt.Sprintf("/api/v1/voice/conversations/%s/download", ir.ConversationID),
+		"has_audio_object":        hasAudio,
+		"storage_mode":            mode,
+		"expires_in_sec":          600,
 	})
+}
+
+// DownloadConversationArtifact serves either the uploaded recording object or a formatted
+// downloadable transcript + verified custody report so users can always download their record.
+func (s *Service) DownloadConversationArtifact(w http.ResponseWriter, r *http.Request) {
+	convID := chi.URLParam(r, "id")
+	userID := resolveUserID(r, "")
+	ir, err := s.repo.GetConversation(r.Context(), userID, convID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "NOT_FOUND", "conversation not found", false)
+		return
+	}
+	if ir.Recording.S3ObjectKey != "" {
+		s.localObjMu.RLock()
+		rawBytes, ok := s.localObjects[ir.Recording.S3ObjectKey]
+		s.localObjMu.RUnlock()
+		if ok && len(rawBytes) > 0 {
+			mime := defaultString(ir.Recording.MimeType, "audio/wav")
+			ext := "wav"
+			if strings.Contains(mime, "text") {
+				ext = "txt"
+			} else if strings.Contains(mime, "mp4") || strings.Contains(mime, "m4a") {
+				ext = "m4a"
+			}
+			w.Header().Set("Content-Type", mime)
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="nexora-%s.%s"`, convID[:min(8, len(convID))], ext))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(rawBytes)
+			return
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "NEXORA Voice Intelligence — Conversation Transcript & Custody Record\n")
+	fmt.Fprintf(&b, "=================================================================\n")
+	fmt.Fprintf(&b, "Title:    %s\n", ir.Title)
+	fmt.Fprintf(&b, "ID:       %s\n", ir.ConversationID)
+	fmt.Fprintf(&b, "Status:   %s\n", ir.Status)
+	if ir.Recording.CallerName != "" || ir.Recording.CallerPhoneMasked != "" {
+		fmt.Fprintf(&b, "Caller:   %s %s (%s)\n", ir.Recording.CallerName, ir.Recording.CallerPhoneMasked, ir.Recording.CallDirection)
+	}
+	fmt.Fprintf(&b, "Summary:  %s\n", ir.Summary)
+	fmt.Fprintf(&b, "SHA-256:  %s\n\n", ir.Recording.Integrity.SHA256Original)
+	fmt.Fprintf(&b, "--- TRANSCRIPT ---\n")
+	if len(ir.Utterances) == 0 {
+		fmt.Fprintf(&b, "(No utterances recorded yet)\n")
+	}
+	for _, u := range ir.Utterances {
+		fmt.Fprintf(&b, "[%.1fs - %.1fs] %s: %s\n", float64(u.StartMS)/1000, float64(u.EndMS)/1000, u.SpeakerLabel, u.OriginalText)
+	}
+	if len(ir.ConversationEvents) > 0 {
+		fmt.Fprintf(&b, "\n--- KEY DECISIONS & COMMITMENTS ---\n")
+		for _, ev := range ir.ConversationEvents {
+			fmt.Fprintf(&b, "* [%s] %s (%s)\n", strings.ToUpper(ev.EventType), ev.Summary, ev.ActorSpeaker)
+		}
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="nexora-transcript-%s.txt"`, convID[:min(8, len(convID))]))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(b.String()))
 }

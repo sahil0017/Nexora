@@ -7,6 +7,14 @@ import { Card, Input, PrimaryButton, SectionHeading } from '../../../core/design
 import { Chip, FadeIn, StatusPill } from '../../../core/design-system/motion';
 import { Screen } from '../../../shared/components/Screen';
 import { useVoiceData } from '../VoiceContext';
+import { ConversationSwitcher } from '../components/ConversationSwitcher';
+
+const QUICK_PROMPTS = [
+  'What did we decide?',
+  'Who promised next steps?',
+  'Any pricing or dates mentioned?',
+  'Any open questions or risks?',
+];
 
 export default function VoiceMemoryScreen() {
   const { activeConversation } = useVoiceData();
@@ -27,25 +35,47 @@ export default function VoiceMemoryScreen() {
   const findings = activeConversation?.reasoning_results ?? [];
   const entities = activeConversation?.extracted_knowledge?.entities ?? [];
   const edges = activeConversation?.extracted_knowledge?.edges ?? [];
+  const citations = qaResult?.citations ?? [];
+
+  const askSample = (prompt: string) => {
+    setQuestion(prompt);
+    qaMut.mutate(prompt);
+  };
 
   return (
     <Screen
-      title="Reasoning & Memory"
-      subtitle="Contradictions, temporal knowledge graph & grounded Q&A"
-      badge="WS5, WS6 & WS8">
+      title="Ask & Memory"
+      subtitle="Ask questions across calls & meetings with verified quotes"
+      badge="VOICE AI">
       <View style={styles.stack}>
+        <ConversationSwitcher />
+
         <FadeIn index={0}>
           <Card variant="featured" style={{ gap: spacing.s }}>
-            <Text style={styles.cardTitle}>Source-Grounded Conversational Q&A</Text>
+            <Text style={styles.cardTitle}>Ask Your Conversations</Text>
+            <Text style={styles.bodySecondary}>
+              Get answers backed by exact spoken quotes, or search every saved transcript.
+            </Text>
             <Input
               value={question}
               onChangeText={setQuestion}
-              placeholder="Ask across your conversations (e.g. What quote did Ananya propose?)"
+              placeholder="Ask anything (e.g. What deadline did we agree on?)"
             />
+            <View style={styles.chipRow}>
+              {QUICK_PROMPTS.map(prompt => (
+                <Chip
+                  key={prompt}
+                  label={prompt}
+                  active={question === prompt}
+                  color={moduleColors.voice}
+                  onPress={() => askSample(prompt)}
+                />
+              ))}
+            </View>
             <View style={{ flexDirection: 'row', gap: spacing.s }}>
               <View style={{ flex: 1 }}>
                 <PrimaryButton
-                  title="Verify & Answer"
+                  title="Ask with Quotes"
                   loading={qaMut.isPending}
                   onPress={() => {
                     if (question.trim()) qaMut.mutate(question.trim());
@@ -53,7 +83,7 @@ export default function VoiceMemoryScreen() {
                 />
               </View>
               <PrimaryButton
-                title="Search Memory"
+                title="Search Transcripts"
                 variant="secondary"
                 loading={searchMut.isPending}
                 onPress={() => {
@@ -63,7 +93,7 @@ export default function VoiceMemoryScreen() {
             </View>
             {searchResults.length > 0 && (
               <View style={styles.qaBox}>
-                <Text style={styles.metaText}>{searchResults.length} matching utterance(s)</Text>
+                <Text style={styles.metaText}>{searchResults.length} matching line(s)</Text>
                 {searchResults.slice(0, 5).map((hit, idx) => (
                   <View key={`${hit.utterance_id ?? idx}-${idx}`} style={styles.citationCard}>
                     <Text style={styles.citationMeta}>
@@ -79,16 +109,16 @@ export default function VoiceMemoryScreen() {
               <View style={styles.qaBox}>
                 <View style={styles.rowBetween}>
                   <StatusPill
-                    label={`${qaResult.confidence_tier} (${Math.round(qaResult.confidence * 100)}%)`}
+                    label={`${qaResult.confidence_tier} (${Math.round((qaResult.confidence ?? 0) * 100)}%)`}
                     tone={qaResult.confidence_tier === 'HIGH' ? 'success' : 'warning'}
                   />
-                  <Text style={styles.metaText}>{qaResult.citations.length} citation(s)</Text>
+                  <Text style={styles.metaText}>{citations.length} quote(s)</Text>
                 </View>
                 <Text style={styles.bodyPrimary}>{qaResult.answer}</Text>
-                {qaResult.citations.map(c => (
-                  <View key={`${c.utterance_id}-${c.start_ms}`} style={styles.citationCard}>
+                {citations.map((c, idx) => (
+                  <View key={`${c.utterance_id}-${c.start_ms}-${idx}`} style={styles.citationCard}>
                     <Text style={styles.citationMeta}>
-                      {c.conversation_title} · {c.speaker_label} @ {(c.start_ms / 1000).toFixed(1)}s
+                      {c.conversation_title} · {c.speaker_label} @ {((c.start_ms ?? 0) / 1000).toFixed(1)}s
                     </Text>
                     <Text style={styles.citationQuote}>"{c.quote}"</Text>
                   </View>
@@ -98,18 +128,23 @@ export default function VoiceMemoryScreen() {
           </Card>
         </FadeIn>
 
-        <SectionHeading title="Reasoning Findings (WS5)" />
+        <SectionHeading title={`Key Insights & Shifts (${findings.length})`} />
         {findings.length === 0 ? (
           <Card>
-            <Text style={styles.bodySecondary}>No contradictions, negotiation shifts, or uncertainties detected in this conversation.</Text>
+            <Text style={styles.bodySecondary}>
+              No contradictions, agreement shifts, or unresolved risks flagged in this conversation.
+            </Text>
           </Card>
         ) : (
           findings.map((f, idx) => (
-            <FadeIn key={f.finding_id} index={idx + 1}>
+            <FadeIn key={f.finding_id || `${idx}`} index={idx + 1}>
               <Card style={{ gap: 6, borderColor: f.severity === 'high' ? colors.statusWarning : colors.borderSubtle }}>
                 <View style={styles.rowBetween}>
-                  <StatusPill label={f.finding_type.toUpperCase()} tone={f.severity === 'high' ? 'warning' : 'info'} />
-                  <Text style={styles.metaText}>{Math.round(f.confidence * 100)}% conf</Text>
+                  <StatusPill
+                    label={(f.finding_type || 'insight').replace(/_/g, ' ').toUpperCase()}
+                    tone={f.severity === 'high' ? 'warning' : 'info'}
+                  />
+                  <Text style={styles.metaText}>{Math.round((f.confidence ?? 0) * 100)}% match</Text>
                 </View>
                 <Text style={styles.cardTitle}>{f.title}</Text>
                 <Text style={styles.bodySecondary}>{f.explanation}</Text>
@@ -118,20 +153,25 @@ export default function VoiceMemoryScreen() {
           ))
         )}
 
-        <SectionHeading title="Temporal Knowledge Graph (WS6)" />
+        <SectionHeading title={`People, Topics & Key Terms (${entities.length})`} />
         <Card style={{ gap: spacing.s }}>
           <View style={styles.chipRow}>
             {entities.length === 0 ? (
-              <Text style={styles.bodySecondary}>No extracted entities yet.</Text>
+              <Text style={styles.bodySecondary}>No key people or topics extracted yet.</Text>
             ) : (
-              entities.map(ent => (
-                <Chip key={ent.entity_id} label={`${ent.canonical_name} (${ent.entity_type})`} active color={moduleColors.voice} />
+              entities.map((ent, idx) => (
+                <Chip
+                  key={ent.entity_id || `${idx}`}
+                  label={`${ent.canonical_name} (${ent.entity_type})`}
+                  active
+                  color={moduleColors.voice}
+                />
               ))
             )}
           </View>
           {edges.slice(0, 6).map((e, i) => (
             <Text key={`${e.from_entity}-${e.to_entity}-${i}`} style={styles.metaText}>
-              • {e.relation_type} (conf {Math.round(e.confidence * 100)}%)
+              • {e.relation_type} ({Math.round((e.confidence ?? 0) * 100)}% match)
             </Text>
           ))}
         </Card>

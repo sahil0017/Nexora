@@ -1,4 +1,4 @@
-import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { Linking, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { API_BASE_URL } from '../config';
 
 type NativeCallerModule = {
@@ -210,4 +210,33 @@ export function subscribeIosCallObserver(onObservedCall: (log: DeviceCallLogRow)
     sub.remove();
     void nativeModule?.stopCallObserver?.().catch(() => {});
   };
+}
+
+export async function openRecordingDownload(
+  rawUrl: string,
+  filename?: string,
+): Promise<{ opened: boolean; resolvedUrl: string }> {
+  const resolvedUrl = resolveVoiceStorageUrl(rawUrl);
+  if (!resolvedUrl) {
+    return { opened: false, resolvedUrl: '' };
+  }
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    const anchor = document.createElement('a');
+    anchor.href = resolvedUrl;
+    if (filename) {
+      anchor.download = filename;
+    }
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    document.body?.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return { opened: true, resolvedUrl };
+  }
+  const canOpen = await Linking.canOpenURL(resolvedUrl).catch(() => true);
+  if (canOpen) {
+    await Linking.openURL(resolvedUrl);
+    return { opened: true, resolvedUrl };
+  }
+  return { opened: false, resolvedUrl };
 }

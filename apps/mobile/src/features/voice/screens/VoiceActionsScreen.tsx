@@ -7,6 +7,7 @@ import { Card, EmptyState, PrimaryButton, SectionHeading } from '../../../core/d
 import { FadeIn, StatusPill } from '../../../core/design-system/motion';
 import { Screen } from '../../../shared/components/Screen';
 import { useVoiceData } from '../VoiceContext';
+import { ConversationSwitcher } from '../components/ConversationSwitcher';
 
 export default function VoiceActionsScreen() {
   const { activeConversation, refresh } = useVoiceData();
@@ -21,58 +22,70 @@ export default function VoiceActionsScreen() {
 
   if (!activeConversation) {
     return (
-      <Screen title="Actions & Review" subtitle="Human-in-the-loop notes, reminders & tasks">
-        <EmptyState title="No active conversation" hint="Select a conversation in Capture first." />
+      <Screen title="Follow-ups & Tasks" subtitle="Review suggested reminders, notes & commitments">
+        <EmptyState title="No Conversation Selected" hint="Pick a conversation in the Library tab first." />
       </Screen>
     );
   }
 
+  const actions = activeConversation.action_suggestions ?? [];
+
   return (
     <Screen
-      title="Actions & Review"
+      title="Follow-ups & Tasks"
       subtitle={activeConversation.title}
-      badge="WS7 · HUMAN APPROVAL GATE">
+      badge="APPROVALS">
       <View style={styles.stack}>
-        <SectionHeading title="Suggested Outcomes (Approval Required)" />
-        {activeConversation.action_suggestions.map((act, idx) => (
-          <FadeIn key={act.action_id} index={idx}>
-            <Card variant={act.status === 'suggested' ? 'featured' : 'default'} style={{ gap: spacing.s }}>
-              <View style={styles.rowBetween}>
-                <StatusPill label={act.action_type.toUpperCase()} tone="info" />
-                <StatusPill
-                  label={act.status.toUpperCase()}
-                  tone={act.status === 'approved' ? 'success' : act.status === 'rejected' ? 'danger' : 'warning'}
-                />
-              </View>
-              <Text style={styles.cardTitle}>{act.title}</Text>
-              <Text style={styles.bodySecondary}>{act.rationale}</Text>
-              {act.evidence_refs && act.evidence_refs.length > 0 && (
-                <Text style={styles.quoteText}>
-                  Evidence ({act.evidence_refs[0].speaker_label}): "{act.evidence_refs[0].quote}"
-                </Text>
-              )}
-              {act.status === 'suggested' && (
-                <View style={styles.pairRow}>
-                  <View style={{ flex: 1 }}>
-                    <PrimaryButton
-                      title="Approve Action"
-                      loading={decideMut.isPending}
-                      onPress={() => decideMut.mutate({ id: act.action_id, decision: 'approved' })}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <PrimaryButton
-                      title="Reject"
-                      variant="secondary"
-                      loading={decideMut.isPending}
-                      onPress={() => decideMut.mutate({ id: act.action_id, decision: 'rejected' })}
-                    />
-                  </View>
+        <ConversationSwitcher />
+        <SectionHeading title={`Suggested Follow-ups (${actions.length})`} />
+        {actions.length === 0 ? (
+          <Card>
+            <EmptyState
+              title="No Follow-ups Suggested Yet"
+              hint="When a conversation includes commitments or reminders, they will appear here for one-tap approval."
+            />
+          </Card>
+        ) : (
+          actions.map((act, idx) => (
+            <FadeIn key={act.action_id || `${idx}`} index={idx}>
+              <Card variant={act.status === 'suggested' ? 'featured' : 'default'} style={{ gap: spacing.s }}>
+                <View style={styles.rowBetween}>
+                  <StatusPill label={(act.action_type || 'task').replace(/_/g, ' ').toUpperCase()} tone="info" />
+                  <StatusPill
+                    label={(act.status || 'suggested').toUpperCase()}
+                    tone={act.status === 'approved' ? 'success' : act.status === 'rejected' ? 'danger' : 'warning'}
+                  />
                 </View>
-              )}
-            </Card>
-          </FadeIn>
-        ))}
+                <Text style={styles.cardTitle}>{act.title}</Text>
+                <Text style={styles.bodySecondary}>{act.rationale}</Text>
+                {act.evidence_refs && act.evidence_refs.length > 0 && (
+                  <Text style={styles.quoteText}>
+                    From {act.evidence_refs[0].speaker_label}: "{act.evidence_refs[0].quote}"
+                  </Text>
+                )}
+                {act.status === 'suggested' && (
+                  <View style={styles.pairRow}>
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title="Approve Task"
+                        loading={decideMut.isPending}
+                        onPress={() => decideMut.mutate({ id: act.action_id, decision: 'approved' })}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title="Dismiss"
+                        variant="secondary"
+                        loading={decideMut.isPending}
+                        onPress={() => decideMut.mutate({ id: act.action_id, decision: 'rejected' })}
+                      />
+                    </View>
+                  </View>
+                )}
+              </Card>
+            </FadeIn>
+          ))
+        )}
       </View>
     </Screen>
   );

@@ -33,7 +33,7 @@ export default function VoiceNavigator() {
         <Tab.Screen
           name="VoiceCapture"
           component={VoiceOverviewScreen}
-          options={{ tabBarIcon: tabIcon('VoiceCapture'), title: 'Capture' }}
+          options={{ tabBarIcon: tabIcon('VoiceCapture'), title: 'Library' }}
         />
         <Tab.Screen
           name="VoiceTranscript"
@@ -43,17 +43,17 @@ export default function VoiceNavigator() {
         <Tab.Screen
           name="VoiceMemory"
           component={VoiceMemoryScreen}
-          options={{ tabBarIcon: tabIcon('VoiceMemory'), title: 'Memory' }}
+          options={{ tabBarIcon: tabIcon('VoiceMemory'), title: 'Ask AI' }}
         />
         <Tab.Screen
           name="VoiceActions"
           component={VoiceActionsScreen}
-          options={{ tabBarIcon: tabIcon('VoiceActions'), title: 'Actions' }}
+          options={{ tabBarIcon: tabIcon('VoiceActions'), title: 'Follow-ups' }}
         />
         <Tab.Screen
           name="VoiceEvidence"
           component={VoiceEvidenceScreen}
-          options={{ tabBarIcon: tabIcon('VoiceEvidence'), title: 'Evidence' }}
+          options={{ tabBarIcon: tabIcon('VoiceEvidence'), title: 'Records' }}
         />
       </Tab.Navigator>
     </VoiceProvider>

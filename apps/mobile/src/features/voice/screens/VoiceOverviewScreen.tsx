@@ -1,24 +1,42 @@
-import React, { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
-import { CallerContextResponse, CaptureSession, voiceApi } from '../../../core/api/voice';
+import { CallerContextResponse, CaptureSession, ConversationIR, voiceApi } from '../../../core/api/voice';
 import {
   fetchDeviceCallLogs,
   getNativeCallerCapabilities,
   putAudioToPresignedUrl,
   requestAndroidScreeningRole,
-  resolveVoiceStorageUrl,
   subscribeIosCallObserver,
   syncIosContactsWithConsent,
   syncOsCallerDirectory,
 } from '../../../core/native/callerIdBridge';
-import { Card, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
+import { Card, EmptyState, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-system/motion';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { Screen } from '../../../shared/components/Screen';
 import { useVoiceData } from '../VoiceContext';
+import { formatSourceLabel, triggerConversationDownload } from '../components/ConversationSwitcher';
+
+type VoicePanel = 'library' | 'capture' | 'live' | 'call_logs' | 'caller_id';
+type SourceFilter = 'all' | 'call' | 'meeting' | 'recording';
+
+const PANEL_TABS: ReadonlyArray<{ key: VoicePanel; label: string }> = [
+  { key: 'library', label: 'Conversations' },
+  { key: 'capture', label: '+ New Note' },
+  { key: 'live', label: 'Live Call' },
+  { key: 'call_logs', label: 'Call Logs' },
+  { key: 'caller_id', label: 'Caller ID' },
+];
+
+const SOURCE_FILTERS: ReadonlyArray<{ key: SourceFilter; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'call', label: 'Calls' },
+  { key: 'meeting', label: 'Meetings' },
+  { key: 'recording', label: 'Recordings & Notes' },
+];
 
 const SOURCE_TYPES = [
   { key: 'mobile_mic', label: 'Live Mic' },
@@ -46,7 +64,11 @@ export default function VoiceOverviewScreen() {
   const { overview, conversations, activeConversation, setActiveConversationId, loading, sseConnected, errorMsg, refresh, fetchConversations } =
     useVoiceData();
 
-  const [showCapture, setShowCapture] = useState(false);
+  const [activePanel, setActivePanel] = useState<VoicePanel>('library');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [sourceType, setSourceType] = useState<(typeof SOURCE_TYPES)[number]['key']>('meeting');
   const [transcript, setTranscript] = useState('');
@@ -172,7 +194,7 @@ export default function VoiceOverviewScreen() {
     onSuccess: async created => {
       setTitle('');
       setTranscript('');
-      setShowCapture(false);
+      setActivePanel('library');
       setCaptureError(null);
       setActiveConversationId(created.conversation_id);
       await refresh();
@@ -391,24 +413,76 @@ export default function VoiceOverviewScreen() {
   });
 
   const presignDownloadMut = useMutation({
-    mutationFn: () => voiceApi.presignDownload(activeConversation!.recording.recording_id),
+    mutationFn: () => triggerConversationDownload(activeConversation!),
     onSuccess: res => {
-      setDownloadUrl(resolveVoiceStorageUrl(res.download_url));
-      setCallerNotice(`Presigned S3 download ready (${res.s3_presigned_status}).`);
+      setDownloadUrl(res.resolvedUrl);
+      setCallerNotice(
+        res.kind === 'audio'
+          ? 'Opened audio recording download.'
+          : 'Downloaded full conversation transcript (.txt).',
+      );
     },
-    onError: (err: any) => setCallerNotice(err?.message ?? 'Presigned download failed'),
+    onError: (err: any) => setCallerNotice(err?.message ?? 'Recording download failed'),
   });
+
+  const handleOpenTranscript = (convId: string) => {
+    setActiveConversationId(convId);
+    nav.navigate('VoiceTranscript');
+  };
+
+  const handleRowDownload = async (conv: ConversationIR) => {
+    setDownloadingId(conv.conversation_id);
+    setDownloadFeedback(null);
+    try {
+      const res = await triggerConversationDownload(conv);
+      setDownloadFeedback(
+        res.kind === 'audio'
+          ? `Downloaded recording for "${conv.title}".`
+          : `Downloaded transcript (.txt) for "${conv.title}".`,
+      );
+    } catch (err: any) {
+      setDownloadFeedback(err?.message ?? 'Could not download right now.');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const filteredConversations = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return conversations.filter(c => {
+      const src = (c.recording?.source_type || '').toLowerCase();
+      if (sourceFilter === 'call' && src !== 'call' && src !== 'phone_call') return false;
+      if (sourceFilter === 'meeting' && src !== 'meeting') return false;
+      if (sourceFilter === 'recording' && (src === 'call' || src === 'phone_call' || src === 'meeting')) return false;
+      if (!q) return true;
+      const speakerMatch = (c.participants ?? []).some(p =>
+        (p.display_name || '').toLowerCase().includes(q),
+      );
+      const topicMatch = (c.topics ?? []).some(t => t.toLowerCase().includes(q));
+      return (
+        (c.title || '').toLowerCase().includes(q) ||
+        (c.summary || '').toLowerCase().includes(q) ||
+        (c.recording?.caller_name || '').toLowerCase().includes(q) ||
+        speakerMatch ||
+        topicMatch
+      );
+    });
+  }, [conversations, searchQuery, sourceFilter]);
 
   return (
     <Screen
-      title="Voice Intelligence"
-      subtitle="Capture, speaker IR, reasoning, memory & verifiable custody"
-      badge="NEXORA VOICE · 10 WORKSTREAMS"
+      title="Voice & Call Notes"
+      subtitle="Calls, meetings & notes turned into transcripts and tasks"
+      badge={sseConnected ? 'LIVE SYNC' : 'READY'}
       rightAction={
-        <TouchableOpacity onPress={() => setShowCapture(v => !v)} style={styles.capturePill}>
-          <Text style={styles.capturePillText}>{showCapture ? 'Close' : '+ Capture'}</Text>
+        <TouchableOpacity
+          onPress={() => setActivePanel(p => (p === 'capture' ? 'library' : 'capture'))}
+          style={styles.capturePill}
+        >
+          <Text style={styles.capturePillText}>{activePanel === 'capture' ? 'Library' : '+ New Note'}</Text>
         </TouchableOpacity>
-      }>
+      }
+    >
       {errorMsg ? (
         <Card style={{ borderColor: colors.statusDanger, marginBottom: spacing.m }}>
           <Text style={{ color: colors.statusDanger, fontFamily: fontFamily.medium, fontSize: 12.5 }}>{errorMsg}</Text>
@@ -416,17 +490,184 @@ export default function VoiceOverviewScreen() {
       ) : null}
 
       <View style={styles.stack}>
-        {showCapture && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.panelTabsRow}>
+          {PANEL_TABS.map(tab => (
+            <Chip
+              key={tab.key}
+              label={tab.label}
+              active={activePanel === tab.key}
+              color={moduleColors.voice}
+              onPress={() => setActivePanel(tab.key)}
+            />
+          ))}
+        </ScrollView>
+
+        {activePanel === 'library' && (
+          <>
+            {loading && !overview ? (
+              <Card style={{ gap: spacing.s }}>
+                <Skeleton height={22} width="55%" />
+                <Skeleton height={44} />
+              </Card>
+            ) : (
+              <FadeIn index={0}>
+                <Card variant="featured" style={{ gap: spacing.m }}>
+                  <View style={styles.rowBetween}>
+                    <View>
+                      <Text style={styles.labelMuted}>YOUR VOICE LIBRARY</Text>
+                      <Text style={[typography.display, { color: moduleColors.voice }]}>
+                        {overview?.conversation_count ?? conversations.length} Conversations
+                      </Text>
+                    </View>
+                    <StatusPill label={sseConnected ? 'LIVE' : 'SYNCED'} tone={sseConnected ? 'info' : 'success'} />
+                  </View>
+
+                  <View style={styles.gridRow}>
+                    <View style={styles.metricBox}>
+                      <Text style={styles.metricVal}>{overview?.utterance_count ?? 0}</Text>
+                      <Text style={styles.metricLbl}>Spoken Lines</Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text style={[styles.metricVal, { color: colors.accentBright }]}>
+                        {overview?.commitments_decisions ?? 0}
+                      </Text>
+                      <Text style={styles.metricLbl}>Key Decisions</Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text style={[styles.metricVal, { color: colors.statusWarning }]}>
+                        {overview?.pending_approvals ?? 0}
+                      </Text>
+                      <Text style={styles.metricLbl}>Pending Tasks</Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text style={[styles.metricVal, { color: moduleColors.voice }]}>
+                        {callLogsQuery.data?.insights?.total_calls ?? 0}
+                      </Text>
+                      <Text style={styles.metricLbl}>Calls Tracked</Text>
+                    </View>
+                  </View>
+                </Card>
+              </FadeIn>
+            )}
+
+            <FadeIn index={1}>
+              <SectionHeading
+                title={`Conversations (${filteredConversations.length})`}
+                action="Refresh"
+                onActionPress={() => {
+                  void fetchConversations().then(() => refresh());
+                }}
+              />
+              <View style={{ gap: spacing.s }}>
+                <Input
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search by title, speaker, caller, or topic…"
+                />
+                <View style={styles.chipRow}>
+                  {SOURCE_FILTERS.map(f => (
+                    <Chip
+                      key={f.key}
+                      label={f.label}
+                      active={sourceFilter === f.key}
+                      color={colors.navBlue}
+                      onPress={() => setSourceFilter(f.key)}
+                    />
+                  ))}
+                </View>
+                {downloadFeedback ? <Text style={styles.noticeText}>{downloadFeedback}</Text> : null}
+              </View>
+            </FadeIn>
+
+            {filteredConversations.length === 0 ? (
+              <Card>
+                <EmptyState
+                  title={conversations.length === 0 ? 'No Conversations Yet' : 'No Matching Conversations'}
+                  hint={
+                    conversations.length === 0
+                      ? 'Tap "+ New Note", "Live Call", or "Call Logs" above to capture your first conversation.'
+                      : 'Try clearing the search query or switching filters.'
+                  }
+                />
+              </Card>
+            ) : (
+              filteredConversations.map((c, idx) => {
+                const isSelected = c.conversation_id === activeConversation?.conversation_id;
+                const isDl = downloadingId === c.conversation_id;
+                const participants = c.participants ?? [];
+                const utterances = c.utterances ?? [];
+                const decisions = (c.conversation_events ?? []).length;
+                const callerLabel = [c.recording?.caller_name, c.recording?.caller_phone_masked]
+                  .filter(Boolean)
+                  .join(' · ');
+
+                return (
+                  <FadeIn key={c.conversation_id} index={Math.min(idx + 2, 8)}>
+                    <Card variant={isSelected ? 'featured' : 'default'} style={{ gap: spacing.s }}>
+                      <Tappable onPress={() => handleOpenTranscript(c.conversation_id)}>
+                        <View style={{ gap: 6 }}>
+                          <View style={styles.rowBetween}>
+                            <Text style={[styles.cardTitle, { flex: 1 }]} numberOfLines={1}>
+                              {c.title || 'Untitled Conversation'}
+                            </Text>
+                            <StatusPill
+                              label={formatSourceLabel(c.recording?.source_type).toUpperCase()}
+                              tone={isSelected ? 'success' : 'info'}
+                            />
+                          </View>
+
+                          {callerLabel ? <Text style={styles.callerText}>Caller: {callerLabel}</Text> : null}
+
+                          <Text style={styles.bodyText} numberOfLines={2}>
+                            {c.summary || 'Tap Open Transcript to read or edit spoken lines.'}
+                          </Text>
+
+                          <Text style={styles.metaText}>
+                            {participants.length} speakers · {utterances.length} lines · {decisions} decisions
+                            {c.overall_confidence ? ` · ${Math.round(c.overall_confidence * 100)}% match` : ''}
+                          </Text>
+                        </View>
+                      </Tappable>
+
+                      <View style={styles.pairRow}>
+                        <View style={{ flex: 1 }}>
+                          <PrimaryButton
+                            title="Open Transcript →"
+                            onPress={() => handleOpenTranscript(c.conversation_id)}
+                            variant={isSelected ? 'primary' : 'nav'}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <PrimaryButton
+                            title={isDl ? 'Preparing…' : 'Download'}
+                            onPress={() => void handleRowDownload(c)}
+                            loading={isDl}
+                            variant="secondary"
+                          />
+                        </View>
+                      </View>
+                    </Card>
+                  </FadeIn>
+                );
+              })
+            )}
+          </>
+        )}
+
+        {activePanel === 'capture' && (
           <FadeIn index={0}>
             <Card variant="featured" style={{ gap: spacing.s, borderColor: moduleColors.voice }}>
               <View style={styles.rowBetween}>
-                <Text style={styles.cardTitle}>WS1 · Capture / Import Recording</Text>
+                <Text style={styles.cardTitle}>New Conversation or Voice Note</Text>
                 <StatusPill
-                  label={permissions.voiceMicCapture ? 'CONSENT OK' : 'CONSENT OFF'}
+                  label={permissions.voiceMicCapture ? 'MIC ALLOWED' : 'NEED CONSENT'}
                   tone={permissions.voiceMicCapture ? 'success' : 'warning'}
                 />
               </View>
-              <Input value={title} onChangeText={setTitle} placeholder="Conversation title (e.g. Sprint Sync)" />
+              <Text style={styles.bodyText}>
+                Save meeting notes, call summaries, or pasted transcripts to generate clean speaker lines and action items.
+              </Text>
+              <Input value={title} onChangeText={setTitle} placeholder="Title (e.g. Client Design Review)" />
               <View style={styles.chipRow}>
                 {SOURCE_TYPES.map(st => (
                   <Chip
@@ -441,18 +682,18 @@ export default function VoiceOverviewScreen() {
               <Input
                 value={transcript}
                 onChangeText={setTranscript}
-                placeholder="Speaker-tagged lines (e.g. Sahil: I will send the contract by Friday)"
+                placeholder="Write or paste speaker lines (e.g. Sahil: I will send the proposal by Friday)"
                 multiline
-                style={{ minHeight: 86, textAlignVertical: 'top' }}
+                style={{ minHeight: 96, textAlignVertical: 'top' }}
               />
               <View style={styles.pairRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.labelMuted}>Estimated SNR (dB)</Text>
+                  <Text style={styles.labelMuted}>Audio Clarity (SNR dB)</Text>
                   <Input value={snrText} onChangeText={setSnrText} keyboardType="numeric" placeholder="22" />
                 </View>
                 <View style={{ flex: 1, justifyContent: 'flex-end' }}>
                   <Chip
-                    label={overlapSuspected ? 'Overlap: Yes' : 'Overlap: No'}
+                    label={overlapSuspected ? 'Multiple People Talking' : 'Single Speaker Turns'}
                     active={overlapSuspected}
                     color={colors.statusWarning}
                     onPress={() => setOverlapSuspected(v => !v)}
@@ -463,7 +704,7 @@ export default function VoiceOverviewScreen() {
               <View style={styles.pairRow}>
                 <View style={{ flex: 1 }}>
                   <PrimaryButton
-                    title="Process Through 10 Workstreams"
+                    title="Save & Transcribe"
                     loading={captureMut.isPending}
                     onPress={handleCapture}
                   />
@@ -480,454 +721,355 @@ export default function VoiceOverviewScreen() {
           </FadeIn>
         )}
 
-        {loading && !overview ? (
-          <Card style={{ gap: spacing.s }}>
-            <Skeleton height={22} width="55%" />
-            <Skeleton height={44} />
-          </Card>
-        ) : (
+        {activePanel === 'live' && (
           <FadeIn index={0}>
-            <Card variant="featured" style={{ gap: spacing.m }}>
-              <View style={styles.rowBetween}>
-                <View>
-                  <Text style={styles.labelMuted}>PLATFORM STATUS · CONVERSATION IR</Text>
-                  <Text style={[typography.display, { color: moduleColors.voice }]}>
-                    {overview?.conversation_count ?? 0} Conversations
-                  </Text>
-                </View>
-                <StatusPill label={sseConnected ? 'LIVE STREAM' : 'VERIFIED IR'} tone={sseConnected ? 'info' : 'success'} />
-              </View>
-
-              <View style={styles.gridRow}>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricVal}>{overview?.utterance_count ?? 0}</Text>
-                  <Text style={styles.metricLbl}>Utterances</Text>
-                </View>
-                <View style={styles.metricBox}>
-                  <Text style={[styles.metricVal, { color: colors.accentBright }]}>
-                    {overview?.commitments_decisions ?? 0}
-                  </Text>
-                  <Text style={styles.metricLbl}>Decisions & Commits</Text>
-                </View>
-                <View style={styles.metricBox}>
-                  <Text style={[styles.metricVal, { color: colors.statusWarning }]}>
-                    {overview?.pending_approvals ?? 0}
-                  </Text>
-                  <Text style={styles.metricLbl}>Pending Actions</Text>
-                </View>
-                <View style={styles.metricBox}>
-                  <Text style={[styles.metricVal, { color: moduleColors.voice }]}>
-                    {Math.round(overview?.avg_audio_quality ?? 0)}/100
-                  </Text>
-                  <Text style={styles.metricLbl}>Avg Audio QC</Text>
-                </View>
-              </View>
-            </Card>
-          </FadeIn>
-        )}
-
-        {activeConversation && (
-          <FadeIn index={1}>
-            <SectionHeading title="Active Conversation IR" action="Transcript →" onActionPress={() => nav.navigate('VoiceTranscript')} />
+            <SectionHeading title="Live Call & Meeting Capture" />
             <Card style={{ gap: spacing.s }}>
               <View style={styles.rowBetween}>
-                <Text style={[styles.cardTitle, { flex: 1 }]}>{activeConversation.title}</Text>
+                <Text style={styles.cardTitle}>Live Streaming Session</Text>
                 <StatusPill
-                  label={`${activeConversation.confidence_tier} (${Math.round(activeConversation.overall_confidence * 100)}%)`}
-                  tone={activeConversation.confidence_tier === 'HIGH' ? 'success' : 'info'}
+                  label={
+                    liveSession
+                      ? liveSession.state === 'background'
+                        ? 'BACKGROUND'
+                        : `LIVE · ${liveSession.chunk_count} CHUNKS`
+                      : 'READY'
+                  }
+                  tone={liveSession?.state === 'background' ? 'warning' : liveSession ? 'success' : 'info'}
                 />
               </View>
-              <Text style={styles.bodyText}>{activeConversation.summary}</Text>
-              <View style={styles.chipRow}>
-                <Chip label={`Strategy: ${activeConversation.recording.quality_report.routing_strategy}`} active color={moduleColors.voice} />
-                <Chip label={`SNR: ${activeConversation.recording.quality_report.snr_db} dB`} />
-                <Chip label={`Lang: ${activeConversation.detected_languages.join(', ')}`} />
-                {activeConversation.interaction_edges && activeConversation.interaction_edges.length > 0 ? (
-                  <Chip label={`Who→Whom: ${activeConversation.interaction_edges.length} edges`} active color={colors.accentPrimary} />
-                ) : null}
-              </View>
+              <Text style={styles.bodyText}>
+                Start an active call or meeting capture session to stream live speech segments and generate a saved transcript when finished.
+              </Text>
+              {!liveSession ? (
+                <>
+                  <Input value={sessionTitle} onChangeText={setSessionTitle} placeholder="Session title (e.g. Vendor Renewal Call)" />
+                  <View style={styles.chipRow}>
+                    {CAPTURE_MODES.map(m => (
+                      <Chip
+                        key={m.key}
+                        label={m.label}
+                        active={captureMode === m.key}
+                        color={moduleColors.voice}
+                        onPress={() => setCaptureMode(m.key)}
+                      />
+                    ))}
+                  </View>
+                  {sessionError ? <Text style={styles.errText}>{sessionError}</Text> : null}
+                  <PrimaryButton
+                    title="Start Live Session"
+                    loading={startSessionMut.isPending}
+                    onPress={handleStartSession}
+                  />
+                  <View style={styles.pairRow}>
+                    <View style={{ flex: 1 }}>
+                      <Input
+                        value={resumeSessionId}
+                        onChangeText={setResumeSessionId}
+                        placeholder="Paste Session ID to resume"
+                      />
+                    </View>
+                    <PrimaryButton
+                      title="Resume"
+                      variant="secondary"
+                      loading={resumeSessionMut.isPending}
+                      onPress={() => resumeSessionId.trim() && resumeSessionMut.mutate(resumeSessionId.trim())}
+                    />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.metaText}>
+                    Session {liveSession.session_id.slice(0, 8)} · {liveSession.chunk_count} segments captured
+                  </Text>
+                  {liveSession.os_capture_guidance ? (
+                    <Text style={styles.bodyText}>{liveSession.os_capture_guidance}</Text>
+                  ) : null}
+                  <View style={styles.chipRow}>
+                    {CHANNEL_HINTS.map(ch => (
+                      <Chip
+                        key={ch.key}
+                        label={ch.label}
+                        active={channelHint === ch.key}
+                        color={moduleColors.voice}
+                        onPress={() => setChannelHint(ch.key)}
+                      />
+                    ))}
+                  </View>
+                  <Input
+                    value={chunkText}
+                    onChangeText={setChunkText}
+                    placeholder="Type what was said or add live note…"
+                  />
+                  {sessionError ? <Text style={styles.errText}>{sessionError}</Text> : null}
+                  <View style={styles.pairRow}>
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title={`Add Segment #${liveSession.chunk_count + 1}`}
+                        loading={streamChunkMut.isPending}
+                        onPress={() => streamChunkMut.mutate()}
+                      />
+                    </View>
+                    <PrimaryButton
+                      title={liveSession.state === 'background' ? 'Resume' : 'Minimize'}
+                      variant="secondary"
+                      loading={toggleBgMut.isPending}
+                      onPress={() => toggleBgMut.mutate()}
+                    />
+                  </View>
+                  <PrimaryButton
+                    title="Finish & Save Transcript"
+                    variant="nav"
+                    loading={finalizeSessionMut.isPending}
+                    onPress={() => finalizeSessionMut.mutate()}
+                  />
+                </>
+              )}
             </Card>
           </FadeIn>
         )}
 
-        <FadeIn index={2}>
-          <SectionHeading title="Live Call & Background Stream" />
-          <Card style={{ gap: spacing.s }}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>WS1 · Background & Call Session</Text>
-              <StatusPill
-                label={
-                  liveSession
-                    ? liveSession.state === 'background'
-                      ? 'BACKGROUND STREAMING'
-                      : `LIVE · ${liveSession.chunk_count} CHUNKS`
-                    : 'READY'
-                }
-                tone={liveSession?.state === 'background' ? 'warning' : liveSession ? 'success' : 'info'}
-              />
-            </View>
-            <Text style={styles.bodyText}>
-              Supports active foreground/background audio services (with visible OS indicator) or dual-track VoIP/meeting streams. Native OS blocks silent PSTN call tapping.
-            </Text>
-            {!liveSession ? (
-              <>
-                <Input value={sessionTitle} onChangeText={setSessionTitle} placeholder="Live call title (e.g. Vendor Renewal Call)" />
-                <View style={styles.chipRow}>
-                  {CAPTURE_MODES.map(m => (
-                    <Chip
-                      key={m.key}
-                      label={m.label}
-                      active={captureMode === m.key}
-                      color={moduleColors.voice}
-                      onPress={() => setCaptureMode(m.key)}
-                    />
-                  ))}
-                </View>
-                {sessionError ? <Text style={styles.errText}>{sessionError}</Text> : null}
-                <PrimaryButton
-                  title="Start Streaming Call Session"
-                  loading={startSessionMut.isPending}
-                  onPress={handleStartSession}
-                />
-                <View style={styles.pairRow}>
-                  <View style={{ flex: 1 }}>
-                    <Input
-                      value={resumeSessionId}
-                      onChangeText={setResumeSessionId}
-                      placeholder="Session ID to resume"
-                    />
-                  </View>
-                  <PrimaryButton
-                    title="Resume"
-                    variant="secondary"
-                    loading={resumeSessionMut.isPending}
-                    onPress={() => resumeSessionId.trim() && resumeSessionMut.mutate(resumeSessionId.trim())}
-                  />
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={styles.metaText}>
-                  Session {liveSession.session_id.slice(0, 8)} · Mode: {liveSession.capture_mode} · {liveSession.chunk_count} chunks
-                </Text>
-                {liveSession.os_capture_guidance ? (
-                  <Text style={styles.metaText}>{liveSession.os_capture_guidance}</Text>
-                ) : null}
-                <View style={styles.chipRow}>
-                  {CHANNEL_HINTS.map(ch => (
-                    <Chip
-                      key={ch.key}
-                      label={ch.label}
-                      active={channelHint === ch.key}
-                      color={moduleColors.voice}
-                      onPress={() => setChannelHint(ch.key)}
-                    />
-                  ))}
-                </View>
-                <Input
-                  value={chunkText}
-                  onChangeText={setChunkText}
-                  placeholder="Optional live chunk text (or leave blank to simulate acoustic turn)"
-                />
-                {sessionError ? <Text style={styles.errText}>{sessionError}</Text> : null}
-                <View style={styles.pairRow}>
-                  <View style={{ flex: 1 }}>
-                    <PrimaryButton
-                      title={`Send Chunk #${liveSession.chunk_count + 1}`}
-                      loading={streamChunkMut.isPending}
-                      onPress={() => streamChunkMut.mutate()}
-                    />
-                  </View>
-                  <PrimaryButton
-                    title={liveSession.state === 'background' ? 'Resume FG' : 'Go Background'}
-                    variant="secondary"
-                    loading={toggleBgMut.isPending}
-                    onPress={() => toggleBgMut.mutate()}
-                  />
-                </View>
-                <PrimaryButton
-                  title="Finalize Call & Seal Evidence (WS9)"
-                  variant="secondary"
-                  loading={finalizeSessionMut.isPending}
-                  onPress={() => finalizeSessionMut.mutate()}
-                />
-              </>
-            )}
-          </Card>
-        </FadeIn>
-
-        <FadeIn index={3}>
-          <SectionHeading title="Free Native Caller Intelligence & S3 Vault" />
-          <Card style={{ gap: spacing.s }}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>Caller ID (₹0 Native OS) & Presigned S3</Text>
-              <StatusPill label={nativeCaps.platform.toUpperCase()} tone="info" />
-            </View>
-            <Text style={styles.bodyText}>{nativeCaps.summary}</Text>
-            <Input
-              value={callerPhone}
-              onChangeText={setCallerPhone}
-              placeholder="Phone number (e.g. +919876504210)"
-              keyboardType="phone-pad"
+        {activePanel === 'call_logs' && (
+          <FadeIn index={0}>
+            <SectionHeading
+              title="Device Call History & Follow-ups"
+              action="Refresh"
+              onActionPress={() => {
+                void callLogsQuery.refetch();
+              }}
             />
-            <View style={styles.pairRow}>
-              <View style={{ flex: 1 }}>
-                <PrimaryButton
-                  title="Check Caller Context"
-                  loading={resolveCallerMut.isPending}
-                  onPress={() => callerPhone.trim() && resolveCallerMut.mutate()}
-                />
-              </View>
-              <PrimaryButton
-                title="Sync OS Dir"
-                variant="secondary"
-                loading={syncOsDirMut.isPending}
-                onPress={() => syncOsDirMut.mutate()}
+            <Card style={{ gap: spacing.s }}>
+              <Text style={styles.bodyText}>
+                Sync phone call history (Android) or Contacts & live calls (iOS), or paste a CSV/JSON export to spot missed follow-ups and caller patterns.
+              </Text>
+              <Input
+                value={callLogsInput}
+                onChangeText={setCallLogsInput}
+                placeholder="Paste CSV (phone_number,contact_name,direction,duration_sec,started_at) or JSON"
+                multiline
               />
-            </View>
-            <View style={styles.pairRow}>
-              <View style={{ flex: 1 }}>
-                <PrimaryButton
-                  title="Presign S3 Recording"
-                  variant="secondary"
-                  loading={presignUploadMut.isPending}
-                  onPress={() => presignUploadMut.mutate()}
-                />
-              </View>
-              <PrimaryButton
-                title="Timeline"
-                variant="secondary"
-                loading={timelineMut.isPending}
-                onPress={() => callerPhone.trim() && timelineMut.mutate()}
-              />
-            </View>
-            {activeConversation && (
               <View style={styles.pairRow}>
                 <View style={{ flex: 1 }}>
                   <PrimaryButton
-                    title="Bind Caller to Active"
-                    variant="secondary"
-                    loading={bindCallerMut.isPending}
-                    onPress={() => (callerPhone.trim() || classifyName.trim()) && bindCallerMut.mutate()}
+                    title="Import Pasted Logs"
+                    loading={importCallLogsMut.isPending}
+                    onPress={() => importCallLogsMut.mutate('text')}
                   />
                 </View>
-                {activeConversation.recording?.recording_id ? (
+                <PrimaryButton
+                  title={Platform.OS === 'ios' ? 'Sync iOS Contacts' : 'Sync Device Calls'}
+                  variant="secondary"
+                  loading={importCallLogsMut.isPending || syncContactsMut.isPending}
+                  onPress={() =>
+                    Platform.OS === 'ios' ? syncContactsMut.mutate() : importCallLogsMut.mutate('device')
+                  }
+                />
+              </View>
+              {(!permissions.deviceCallLogsRead || !permissions.deviceCallScreening) && (
+                <View style={styles.pairRow}>
+                  {!permissions.deviceCallLogsRead && (
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title="Allow Call History"
+                        variant="secondary"
+                        onPress={() => void requestOsCallLogs()}
+                      />
+                    </View>
+                  )}
+                  {!permissions.deviceCallScreening && (
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title="Enable Caller ID"
+                        variant="secondary"
+                        onPress={() => void requestOsCallScreening()}
+                      />
+                    </View>
+                  )}
                   <PrimaryButton
-                    title="Presign Download"
+                    title="Privacy"
+                    variant="secondary"
+                    onPress={() => nav.navigate('PrivacyPermissions')}
+                  />
+                </View>
+              )}
+              {callLogsNotice ? <Text style={styles.noticeText}>{callLogsNotice}</Text> : null}
+
+              {callLogsQuery.data?.insights && callLogsQuery.data.insights.total_calls > 0 ? (
+                <View style={{ gap: spacing.s }}>
+                  <View style={styles.gridRow}>
+                    <View style={styles.metricBox}>
+                      <Text style={styles.metricVal}>{callLogsQuery.data.insights.total_calls}</Text>
+                      <Text style={styles.metricLbl}>Total Calls</Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text style={[styles.metricVal, { color: colors.statusWarning }]}>
+                        {callLogsQuery.data.insights.missed_count}
+                      </Text>
+                      <Text style={styles.metricLbl}>Missed</Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text style={styles.metricVal}>
+                        {Math.round(callLogsQuery.data.insights.total_talk_duration_sec / 60)}m
+                      </Text>
+                      <Text style={styles.metricLbl}>Talk Time</Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text style={styles.metricVal}>{callLogsQuery.data.insights.unknown_numbers}</Text>
+                      <Text style={styles.metricLbl}>Unknown</Text>
+                    </View>
+                  </View>
+
+                  {callLogsQuery.data.insights.follow_up_alerts.length > 0 && (
+                    <View style={{ gap: 4 }}>
+                      <Text style={styles.labelMuted}>RECOMMENDED FOLLOW-UPS</Text>
+                      {callLogsQuery.data.insights.follow_up_alerts.slice(0, 4).map((al, i) => (
+                        <Card key={`${al.alert_type}-${al.phone_hash}-${i}`} variant="subtle" style={{ gap: 2 }}>
+                          <Text style={styles.cardTitle}>{al.title}</Text>
+                          <Text style={styles.metaText}>{al.recommendation}</Text>
+                        </Card>
+                      ))}
+                    </View>
+                  )}
+
+                  <View style={{ gap: 4 }}>
+                    <Text style={styles.labelMuted}>RECENT CALLS ({callLogsQuery.data.count})</Text>
+                    {(callLogsQuery.data.logs ?? []).slice(0, 8).map(row => (
+                      <View key={row.id} style={styles.rowBetween}>
+                        <Text style={styles.metaText} numberOfLines={1}>
+                          {row.contact_name || row.phone_masked} · {row.direction.toUpperCase()} · {row.duration_sec}s
+                        </Text>
+                        <StatusPill
+                          label={row.spam_risk === 'high' ? 'SPAM' : row.source}
+                          tone={row.spam_risk === 'high' ? 'danger' : 'info'}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.metaText}>No call logs synced yet. Sync from your phone or paste a CSV/JSON export.</Text>
+              )}
+            </Card>
+          </FadeIn>
+        )}
+
+        {activePanel === 'caller_id' && (
+          <FadeIn index={0}>
+            <SectionHeading title="Caller Lookup & Recording Export" />
+            <Card style={{ gap: spacing.s }}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.cardTitle}>Caller Context & Contacts</Text>
+                <StatusPill label={nativeCaps.platform.toUpperCase()} tone="info" />
+              </View>
+              <Text style={styles.bodyText}>{nativeCaps.summary}</Text>
+              <Input
+                value={callerPhone}
+                onChangeText={setCallerPhone}
+                placeholder="Phone number (e.g. +919876504210)"
+                keyboardType="phone-pad"
+              />
+              <View style={styles.pairRow}>
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton
+                    title="Identify Caller"
+                    loading={resolveCallerMut.isPending}
+                    onPress={() => callerPhone.trim() && resolveCallerMut.mutate()}
+                  />
+                </View>
+                <PrimaryButton
+                  title="Sync Contacts"
+                  variant="secondary"
+                  loading={syncOsDirMut.isPending}
+                  onPress={() => syncOsDirMut.mutate()}
+                />
+              </View>
+              <View style={styles.pairRow}>
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton
+                    title="Upload Audio Sample"
+                    variant="secondary"
+                    loading={presignUploadMut.isPending}
+                    onPress={() => presignUploadMut.mutate()}
+                  />
+                </View>
+                <PrimaryButton
+                  title="Call History"
+                  variant="secondary"
+                  loading={timelineMut.isPending}
+                  onPress={() => callerPhone.trim() && timelineMut.mutate()}
+                />
+              </View>
+              {activeConversation && (
+                <View style={styles.pairRow}>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton
+                      title="Link Caller to Active"
+                      variant="secondary"
+                      loading={bindCallerMut.isPending}
+                      onPress={() => (callerPhone.trim() || classifyName.trim()) && bindCallerMut.mutate()}
+                    />
+                  </View>
+                  <PrimaryButton
+                    title="Download Active File"
                     variant="secondary"
                     loading={presignDownloadMut.isPending}
                     onPress={() => presignDownloadMut.mutate()}
                   />
-                ) : null}
-              </View>
-            )}
-            {downloadUrl ? (
-              <Text style={styles.metaText} numberOfLines={2}>
-                Download URL: {downloadUrl}
-              </Text>
-            ) : null}
-
-            {callerCtx && (
-              <Card variant="subtle" style={{ gap: 6 }}>
-                <View style={styles.rowBetween}>
-                  <Text style={styles.cardTitle}>
-                    {callerCtx.caller.display_name || callerCtx.caller.phone_masked}
-                  </Text>
-                  <StatusPill
-                    label={callerCtx.caller.spam_risk === 'high' ? 'SPAM HIGH' : (callerCtx.caller.relationship_label || 'UNKNOWN').toUpperCase()}
-                    tone={callerCtx.caller.spam_risk === 'high' ? 'danger' : callerCtx.caller.identity_conflict ? 'warning' : 'success'}
-                  />
                 </View>
-                <Text style={styles.metaText}>
-                  Source: {callerCtx.caller.source} · Calls: {callerCtx.caller.call_count} · Past Linked: {callerCtx.timeline.length}
-                  {callerCtx.caller.business_category ? ` · ${callerCtx.caller.business_category}` : ''}
+              )}
+              {downloadUrl ? (
+                <Text style={styles.noticeText} numberOfLines={2}>
+                  Ready: {downloadUrl}
                 </Text>
-                {callerCtx.caller.identity_conflict ? (
-                  <Text style={styles.errText}>
-                    Identity conflict: {callerCtx.caller.observed_identities?.map(o => `${o.source}: ${o.name}`).join(' vs ')}
+              ) : null}
+
+              {callerCtx && (
+                <Card variant="subtle" style={{ gap: 6 }}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.cardTitle}>
+                      {callerCtx.caller.display_name || callerCtx.caller.phone_masked}
+                    </Text>
+                    <StatusPill
+                      label={callerCtx.caller.spam_risk === 'high' ? 'SPAM HIGH' : (callerCtx.caller.relationship_label || 'UNKNOWN').toUpperCase()}
+                      tone={callerCtx.caller.spam_risk === 'high' ? 'danger' : callerCtx.caller.identity_conflict ? 'warning' : 'success'}
+                    />
+                  </View>
+                  <Text style={styles.metaText}>
+                    Calls: {callerCtx.caller.call_count} · Past Linked: {callerCtx.timeline.length}
+                    {callerCtx.caller.business_category ? ` · ${callerCtx.caller.business_category}` : ''}
                   </Text>
-                ) : null}
-                {callerCtx.caller.needs_classification && (
-                  <View style={{ gap: spacing.xs, marginTop: 4 }}>
-                    <Input value={classifyName} onChangeText={setClassifyName} placeholder="Who called? (Name / Business)" />
-                    <Input value={classifyOrg} onChangeText={setClassifyOrg} placeholder="Organization / Purpose (optional)" />
-                    <View style={styles.pairRow}>
-                      <View style={{ flex: 1 }}>
+                  {callerCtx.caller.identity_conflict ? (
+                    <Text style={styles.errText}>
+                      Different names seen: {callerCtx.caller.observed_identities?.map(o => `${o.source}: ${o.name}`).join(' vs ')}
+                    </Text>
+                  ) : null}
+                  {callerCtx.caller.needs_classification && (
+                    <View style={{ gap: spacing.xs, marginTop: 4 }}>
+                      <Input value={classifyName} onChangeText={setClassifyName} placeholder="Who called? (Name / Business)" />
+                      <Input value={classifyOrg} onChangeText={setClassifyOrg} placeholder="Company / Role (optional)" />
+                      <View style={styles.pairRow}>
+                        <View style={{ flex: 1 }}>
+                          <PrimaryButton
+                            title="Save Contact"
+                            loading={classifyCallerMut.isPending}
+                            onPress={() => classifyCallerMut.mutate()}
+                          />
+                        </View>
                         <PrimaryButton
-                          title="Save Classification"
-                          loading={classifyCallerMut.isPending}
-                          onPress={() => classifyCallerMut.mutate()}
+                          title="Mark Spam"
+                          variant="secondary"
+                          loading={spamReportMut.isPending}
+                          onPress={() => spamReportMut.mutate()}
                         />
                       </View>
-                      <PrimaryButton
-                        title="Report Spam"
-                        variant="secondary"
-                        loading={spamReportMut.isPending}
-                        onPress={() => spamReportMut.mutate()}
-                      />
                     </View>
-                  </View>
-                )}
-              </Card>
-            )}
-            {callerNotice ? <Text style={styles.metaText}>{callerNotice}</Text> : null}
-          </Card>
-        </FadeIn>
-
-        <FadeIn index={4}>
-          <SectionHeading
-            title="Historic Call Logs & Insights"
-            action="Refresh Insights"
-            onActionPress={() => {
-              void callLogsQuery.refetch();
-            }}
-          />
-          <Card style={{ gap: spacing.s }}>
-            <Text style={styles.bodyText}>
-              Dynamically import device call history (Android CallLog / CSV / JSON) into voice.call_logs — zero manual
-              seed rows — to generate follow-up alerts and caller patterns.
-            </Text>
-            <Input
-              value={callLogsInput}
-              onChangeText={setCallLogsInput}
-              placeholder="Paste CSV (phone_number,contact_name,direction,duration_sec,started_at) or JSON logs"
-              multiline
-            />
-            <View style={styles.pairRow}>
-              <View style={{ flex: 1 }}>
-                <PrimaryButton
-                  title="Import & Analyze Logs"
-                  loading={importCallLogsMut.isPending}
-                  onPress={() => importCallLogsMut.mutate('text')}
-                />
-              </View>
-              <PrimaryButton
-                title={Platform.OS === 'ios' ? 'Sync iOS Contacts' : 'Sync Device CallLog'}
-                variant="secondary"
-                loading={importCallLogsMut.isPending || syncContactsMut.isPending}
-                onPress={() =>
-                  Platform.OS === 'ios' ? syncContactsMut.mutate() : importCallLogsMut.mutate('device')
-                }
-              />
-            </View>
-            {(!permissions.deviceCallLogsRead || !permissions.deviceCallScreening) && (
-              <View style={styles.pairRow}>
-                {!permissions.deviceCallLogsRead && (
-                  <View style={{ flex: 1 }}>
-                    <PrimaryButton
-                      title="Grant CallLog Access"
-                      variant="secondary"
-                      onPress={() => void requestOsCallLogs()}
-                    />
-                  </View>
-                )}
-                {!permissions.deviceCallScreening && (
-                  <View style={{ flex: 1 }}>
-                    <PrimaryButton
-                      title="Enable Caller Screening"
-                      variant="secondary"
-                      onPress={() => void requestOsCallScreening()}
-                    />
-                  </View>
-                )}
-                <PrimaryButton
-                  title="Privacy"
-                  variant="secondary"
-                  onPress={() => nav.navigate('PrivacyPermissions')}
-                />
-              </View>
-            )}
-            {callLogsNotice ? <Text style={styles.metaText}>{callLogsNotice}</Text> : null}
-
-            {callLogsQuery.data?.insights && callLogsQuery.data.insights.total_calls > 0 ? (
-              <View style={{ gap: spacing.s }}>
-                <View style={styles.gridRow}>
-                  <View style={styles.metricBox}>
-                    <Text style={styles.metricVal}>{callLogsQuery.data.insights.total_calls}</Text>
-                    <Text style={styles.metricLbl}>Total Calls</Text>
-                  </View>
-                  <View style={styles.metricBox}>
-                    <Text style={[styles.metricVal, { color: colors.statusWarning }]}>
-                      {callLogsQuery.data.insights.missed_count}
-                    </Text>
-                    <Text style={styles.metricLbl}>Missed</Text>
-                  </View>
-                  <View style={styles.metricBox}>
-                    <Text style={styles.metricVal}>
-                      {Math.round(callLogsQuery.data.insights.total_talk_duration_sec / 60)}m
-                    </Text>
-                    <Text style={styles.metricLbl}>Talk Time</Text>
-                  </View>
-                  <View style={styles.metricBox}>
-                    <Text style={styles.metricVal}>{callLogsQuery.data.insights.unknown_numbers}</Text>
-                    <Text style={styles.metricLbl}>Unknowns</Text>
-                  </View>
-                </View>
-
-                {callLogsQuery.data.insights.follow_up_alerts.length > 0 && (
-                  <View style={{ gap: 4 }}>
-                    <Text style={styles.labelMuted}>DYNAMIC FOLLOW-UP INSIGHTS</Text>
-                    {callLogsQuery.data.insights.follow_up_alerts.slice(0, 4).map((al, i) => (
-                      <Card key={`${al.alert_type}-${al.phone_hash}-${i}`} variant="subtle" style={{ gap: 2 }}>
-                        <Text style={styles.cardTitle}>{al.title}</Text>
-                        <Text style={styles.metaText}>{al.recommendation}</Text>
-                      </Card>
-                    ))}
-                  </View>
-                )}
-
-                <View style={{ gap: 4 }}>
-                  <Text style={styles.labelMuted}>LOADED HISTORIC CALL LOGS TABLE ({callLogsQuery.data.count})</Text>
-                  {(callLogsQuery.data.logs ?? []).slice(0, 8).map(row => (
-                    <View key={row.id} style={styles.rowBetween}>
-                      <Text style={styles.metaText} numberOfLines={1}>
-                        {row.contact_name || row.phone_masked} · {row.direction.toUpperCase()} · {row.duration_sec}s
-                      </Text>
-                      <StatusPill
-                        label={row.spam_risk === 'high' ? 'SPAM' : row.source}
-                        tone={row.spam_risk === 'high' ? 'danger' : 'info'}
-                      />
-                    </View>
-                  ))}
-                </View>
-              </View>
-            ) : (
-              <Text style={styles.metaText}>No call logs loaded yet. Sync device CallLog or paste CSV/JSON above.</Text>
-            )}
-          </Card>
-        </FadeIn>
-
-        <SectionHeading
-          title="Captured Conversations"
-          action="Refresh List"
-          onActionPress={() => {
-            void fetchConversations().then(() => refresh());
-          }}
-        />
-        {conversations.map((c, idx) => {
-          const isSelected = c.conversation_id === activeConversation?.conversation_id;
-          return (
-            <FadeIn key={c.conversation_id} index={idx + 2}>
-              <Tappable onPress={() => setActiveConversationId(c.conversation_id)}>
-                <Card variant={isSelected ? 'featured' : 'default'} style={{ gap: 6 }}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.cardTitle}>{c.title}</Text>
-                    <StatusPill
-                      label={isSelected ? 'ACTIVE' : c.recording.source_type.toUpperCase()}
-                      tone={isSelected ? 'success' : 'info'}
-                    />
-                  </View>
-                  <Text style={styles.bodyText} numberOfLines={2}>
-                    {c.summary}
-                  </Text>
-                  <Text style={styles.metaText}>
-                    {c.participants.length} speakers · {c.utterances.length} utterances · {c.reasoning_results.length} reasoning findings
-                  </Text>
+                  )}
                 </Card>
-              </Tappable>
-            </FadeIn>
-          );
-        })}
+              )}
+              {callerNotice ? <Text style={styles.noticeText}>{callerNotice}</Text> : null}
+            </Card>
+          </FadeIn>
+        )}
       </View>
     </Screen>
   );
@@ -935,6 +1077,7 @@ export default function VoiceOverviewScreen() {
 
 const styles = StyleSheet.create({
   stack: { gap: spacing.m },
+  panelTabsRow: { gap: spacing.s, paddingRight: spacing.s },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
   pairRow: { flexDirection: 'row', gap: spacing.s, alignItems: 'center' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
@@ -948,8 +1091,10 @@ const styles = StyleSheet.create({
   },
   capturePillText: { color: moduleColors.voice, fontFamily: fontFamily.medium, fontSize: 12, fontWeight: '700' },
   cardTitle: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 14.5, fontWeight: '700' },
+  callerText: { color: moduleColors.voice, fontFamily: fontFamily.medium, fontSize: 12 },
   bodyText: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12.5, lineHeight: 18 },
   metaText: { color: colors.textMuted, fontFamily: fontFamily.mono, fontSize: 11 },
+  noticeText: { color: moduleColors.voice, fontFamily: fontFamily.medium, fontSize: 12 },
   labelMuted: { color: colors.textMuted, fontFamily: fontFamily.medium, fontSize: 10.5, fontWeight: '600', letterSpacing: 0.4 },
   gridRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s },
   metricBox: {

@@ -551,8 +551,16 @@ export const voiceApi = {
       body,
     ),
   presignDownload: (recordingId: string) =>
-    api.get<{ download_url: string; storage_uri: string; s3_object_key: string; s3_presigned_status: string }>(
-      `/voice/recordings/${recordingId}/presign-download`,
-    ),
+    api.get<{
+      download_url: string;
+      transcript_download_url?: string;
+      has_audio_object?: boolean;
+      storage_mode?: string;
+      storage_uri: string;
+      s3_object_key: string;
+      s3_presigned_status: string;
+    }>(`/voice/recordings/${recordingId}/presign-download`),
+  downloadTranscriptUrl: (conversationId: string) =>
+    `${API_BASE_URL}/voice/conversations/${conversationId}/download`,
   streamUrl: () => `${API_BASE_URL}/voice/stream`,
 };

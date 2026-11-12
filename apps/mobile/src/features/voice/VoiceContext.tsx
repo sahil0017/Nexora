@@ -19,6 +19,53 @@ type VoiceContextValue = {
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
+export function normalizeConversationIR(c: ConversationIR): ConversationIR {
+  const recording = (c.recording ?? {}) as ConversationIR['recording'];
+  const qr = (recording.quality_report ?? {}) as ConversationIR['recording']['quality_report'];
+  const integ = (recording.integrity ?? {}) as ConversationIR['recording']['integrity'];
+  const ek = (c.extracted_knowledge ?? {}) as ConversationIR['extracted_knowledge'];
+  const ev = c.evidence
+    ? {
+        ...c.evidence,
+        custody_events: Array.isArray(c.evidence.custody_events) ? c.evidence.custody_events : [],
+      }
+    : undefined;
+
+  return {
+    ...c,
+    detected_languages: Array.isArray(c.detected_languages) ? c.detected_languages : [],
+    topics: Array.isArray(c.topics) ? c.topics : [],
+    participants: Array.isArray(c.participants) ? c.participants : [],
+    utterances: Array.isArray(c.utterances)
+      ? c.utterances.map(u => ({
+          ...u,
+          word_timestamps: Array.isArray(u.word_timestamps) ? u.word_timestamps : [],
+        }))
+      : [],
+    conversation_events: Array.isArray(c.conversation_events) ? c.conversation_events : [],
+    extracted_knowledge: {
+      entities: Array.isArray(ek.entities) ? ek.entities : [],
+      edges: Array.isArray(ek.edges) ? ek.edges : [],
+    },
+    reasoning_results: Array.isArray(c.reasoning_results) ? c.reasoning_results : [],
+    action_suggestions: Array.isArray(c.action_suggestions) ? c.action_suggestions : [],
+    human_corrections: Array.isArray(c.human_corrections) ? c.human_corrections : [],
+    source_evidence_refs: Array.isArray(c.source_evidence_refs) ? c.source_evidence_refs : [],
+    interaction_edges: Array.isArray(c.interaction_edges) ? c.interaction_edges : [],
+    model_telemetry: Array.isArray(c.model_telemetry) ? c.model_telemetry : [],
+    recording: {
+      ...recording,
+      quality_report: {
+        ...qr,
+        vad_segments: Array.isArray(qr.vad_segments) ? qr.vad_segments : [],
+        warnings: Array.isArray(qr.warnings) ? qr.warnings : [],
+      },
+      integrity: integ,
+    },
+    evidence: ev,
+  };
+}
+
 export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -53,7 +100,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   }, [qc]);
 
   const conversations = useMemo(
-    () => overviewQuery.data?.conversations ?? [],
+    () => (overviewQuery.data?.conversations ?? []).map(normalizeConversationIR),
     [overviewQuery.data?.conversations],
   );
 
@@ -72,7 +119,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
 
   const refreshConversation = useCallback(
     async (id: string) => {
-      const updated = await voiceApi.getConversation(id);
+      const updated = normalizeConversationIR(await voiceApi.getConversation(id));
       await qc.invalidateQueries({ queryKey: ['voice-overview'] });
       return updated;
     },
@@ -81,7 +128,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
 
   const fetchConversations = useCallback(async () => {
     const res = await voiceApi.conversations();
-    return res.conversations ?? [];
+    return (res.conversations ?? []).map(normalizeConversationIR);
   }, []);
 
   const value = useMemo<VoiceContextValue>(
@@ -93,7 +140,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       setActiveConversationId: setSelectedId,
       loading: overviewQuery.isLoading,
       sseConnected,
-      errorMsg: overviewQuery.isError ? (overviewQuery.error as Error)?.message ?? 'Unable to load Voice Intelligence' : null,
+      errorMsg: overviewQuery.isError ? (overviewQuery.error as Error)?.message ?? 'Unable to load Voice & Call Notes' : null,
       refresh,
       refreshConversation,
       fetchConversations,

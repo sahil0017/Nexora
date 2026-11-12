@@ -76,8 +76,8 @@ const STARTER_PROMPTS: StarterPrompt[] = [
   {
     id: 'voice-call-qa',
     domain: 'voice',
-    title: 'Commitments & call memory QA',
-    subtitle: 'Search decisions, commitments & speakers with citations',
+    title: 'Decisions & call follow-ups',
+    subtitle: 'Search key decisions, speakers & promised tasks',
     query: 'What commitments, decisions, or follow-ups are open across my recent conversations and calls?',
     liveHint: 'voice',
   },
@@ -374,7 +374,7 @@ export default function AssistantScreen() {
             id: nextId++,
             from: 'assistant',
             text: `${qa.answer}${insSummary}`,
-            meta: `Voice Intelligence · ${qa.confidence_tier} (${Math.round(qa.confidence * 100)}%) · ${qa.citations.length} citation(s)`,
+            meta: `Voice & Call Notes · ${Math.round(qa.confidence * 100)}% match · ${qa.citations.length} quote(s)`,
             actions: alertLines.length > 0 ? alertLines : undefined,
             context: qa.citations.map(c => ({
               id: c.utterance_id,
@@ -547,7 +547,7 @@ export default function AssistantScreen() {
                   style={[styles.contextChip, styles.contextChipVoice]}>
                   <View style={[styles.dot, { backgroundColor: moduleColors.voice }]} />
                   <Text style={[styles.contextChipText, { color: moduleColors.voice }]} numberOfLines={1}>
-                    Voice: {voiceOverview.data.conversation_count} convs · {voiceInsights.data?.total_calls ?? 0} calls
+                    Voice: {voiceOverview.data.conversation_count} talks · {voiceInsights.data?.total_calls ?? 0} calls
                   </Text>
                 </TouchableOpacity>
               ) : null}
@@ -600,7 +600,7 @@ export default function AssistantScreen() {
                       : item.liveHint === 'move' && brief.data
                       ? 'Live corridor'
                       : item.liveHint === 'voice' && voiceOverview.data
-                      ? `${voiceOverview.data.conversation_count} convs · ${voiceInsights.data?.total_calls ?? 0} calls`
+                      ? `${voiceOverview.data.conversation_count} talks · ${voiceInsights.data?.total_calls ?? 0} calls`
                       : null;
 
                   return (
@@ -608,6 +608,7 @@ export default function AssistantScreen() {
                       <Tappable
                         onPress={() => submit(item.query)}
                         accessibilityLabel={`Ask ${item.title}`}
+                        containerStyle={styles.starterMainPressable}
                         style={styles.starterMainTap}>
                         <View style={styles.starterTopLine}>
                           <View style={styles.starterDomainPill}>
@@ -694,7 +695,7 @@ export default function AssistantScreen() {
                           m.financeDomain && { color: moduleColors.finance },
                           m.voiceDomain && { color: moduleColors.voice },
                         ]}>
-                        ✦ {m.voiceDomain ? 'Voice Intelligence' : m.financeDomain ? 'Wealth Advisor' : 'Copilot'}
+                        ✦ {m.voiceDomain ? 'Voice & Call Notes' : m.financeDomain ? 'Wealth Advisor' : 'Copilot'}
                       </Text>
                     </View>
                   )}
@@ -781,7 +782,7 @@ export default function AssistantScreen() {
                           styles.deepLinkBtn,
                           { backgroundColor: 'rgba(167, 139, 250, 0.14)', borderColor: moduleColors.voice },
                         ]}>
-                        <Text style={[styles.deepLinkText, { color: moduleColors.voice }]}>Voice Hub →</Text>
+                        <Text style={[styles.deepLinkText, { color: moduleColors.voice }]}>Voice Library →</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => nav.navigate('Voice', { screen: 'VoiceMemory' })}
@@ -789,7 +790,7 @@ export default function AssistantScreen() {
                           styles.deepLinkBtn,
                           { backgroundColor: 'rgba(167, 139, 250, 0.08)', borderColor: 'rgba(167, 139, 250, 0.35)' },
                         ]}>
-                        <Text style={[styles.deepLinkText, { color: moduleColors.voice }]}>Memory & QA →</Text>
+                        <Text style={[styles.deepLinkText, { color: moduleColors.voice }]}>Ask & Memory →</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -1009,18 +1010,23 @@ const styles = StyleSheet.create({
   starterRowCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: colors.bgSurface,
     borderRadius: radii.card,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
     paddingLeft: 12,
     paddingRight: 10,
-    paddingVertical: 10,
+    paddingVertical: 11,
     gap: 10,
   },
-  starterMainTap: {
+  starterMainPressable: {
     flex: 1,
-    gap: 3,
+    minWidth: 0,
+  },
+  starterMainTap: {
+    width: '100%',
+    gap: 4,
   },
   starterTopLine: {
     flexDirection: 'row',
@@ -1038,6 +1044,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '700',
     letterSpacing: 0.4,
+    lineHeight: 14,
   },
   liveTagPill: {
     backgroundColor: 'rgba(16, 185, 129, 0.12)',
@@ -1046,12 +1053,14 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.28)',
+    alignSelf: 'center',
   },
   liveTagText: {
     color: colors.accentBright,
     fontFamily: fontFamily.medium,
     fontSize: 10,
     fontWeight: '600',
+    lineHeight: 13,
   },
   starterTitle: {
     color: colors.textPrimary,
@@ -1068,21 +1077,27 @@ const styles = StyleSheet.create({
   starterActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    alignSelf: 'center',
+    flexShrink: 0,
     gap: 6,
   },
   editPromptBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    height: 28,
+    paddingHorizontal: 10,
     borderRadius: 999,
     backgroundColor: colors.bgElevated,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   editPromptText: {
     color: colors.textSecondary,
     fontFamily: fontFamily.medium,
     fontSize: 11,
     fontWeight: '600',
+    lineHeight: 14,
   },
   runPromptBtn: {
     width: 28,
@@ -1097,7 +1112,9 @@ const styles = StyleSheet.create({
   runPromptArrow: {
     color: colors.routeCyan,
     fontSize: 13,
+    lineHeight: 15,
     fontWeight: '700',
+    textAlign: 'center',
   },
   langWrap: {
     gap: 6,
@@ -1270,5 +1287,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  send: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
+  send: { color: '#FFFFFF', fontSize: 17, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
 });
