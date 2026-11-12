@@ -428,6 +428,14 @@ export const moveApi = {
       online_learner?: { sqs_polls?: number; active_hazards_count?: number; active_hotspots_count?: number };
     }>('/move/intelligence/status'),
 
+  deepStatus: () =>
+    api.get<{
+      status: string;
+      brain_reachable: boolean;
+      architecture_count?: number;
+      architectures?: Record<string, string>;
+    }>('/move/deep/status'),
+
   nearbyHazards: (p: GeoPoint, radiusM = 3000) =>
     api.get<{ hazards: Array<{ id?: string; hazard_type: string; severity: string; confidence?: number }> }>(
       `/move/hazards/nearby?lat=${p.latitude}&lon=${p.longitude}&radius_m=${radiusM}`,

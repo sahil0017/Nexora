@@ -110,6 +110,7 @@ func Mount(r chi.Router, svc *Service) {
 		m.Post("/assistant/query", svc.AssistantQuery)
 		m.Get("/stack/libraries", svc.ListStackLibraries)
 		m.Get("/intelligence/status", svc.GetIntelligenceStatus)
+		m.Get("/deep/status", svc.GetDeepMLStatus)
 		// 12-Pillar City Digital Twin, Safety, Road Memory & Privacy Endpoints
 		m.Get("/digital-twin/state", svc.GetDigitalTwinState)
 		m.Post("/digital-twin/simulate", svc.SimulateUrbanIntervention)
@@ -1497,6 +1498,21 @@ func (s *Service) GetIntelligenceStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"brain_reachable": false,
 		"mode":            "deterministic_fallback",
+	})
+}
+
+// GetDeepMLStatus exposes status of all 16 Deep Learning architectures from the Python ML brain.
+func (s *Service) GetDeepMLStatus(w http.ResponseWriter, r *http.Request) {
+	if s.ml != nil {
+		if out, ok := s.ml.GetJSON(r.Context(), "/v1/deep/status"); ok {
+			writeJSON(w, http.StatusOK, out)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "degraded",
+		"brain_reachable": false,
+		"message":         "deep learning service offline or unreachable",
 	})
 }
 
