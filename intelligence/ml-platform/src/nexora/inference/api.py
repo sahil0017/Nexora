@@ -29,6 +29,7 @@ from nexora.models.privacy_intelligence import PrivacyPreservingCrowdAggregator
 from nexora.models.traffic_forecaster import SpatioTemporalTrafficForecaster
 from nexora.vision.road_inspector import RoadVisionInspector
 from nexora.voice.engine import VoiceIntelligenceNetwork
+from nexora.deep_learning import hub
 
 traffic_model = SpatioTemporalTrafficForecaster()
 demand_model = MobilityDemandForecaster()
@@ -679,3 +680,256 @@ def voice_session_finalize(session_id: str) -> dict[str, Any]:
     if res is None:
         raise HTTPException(status_code=404, detail="voice session not found")
     return res
+
+
+# =============================================================================
+# NEXORA UNIFIED DEEP LEARNING PLATFORM ENDPOINTS (/v1/deep/*)
+# =============================================================================
+
+
+@app.get("/v1/deep/status")
+def deep_status() -> dict[str, Any]:
+    """Status & model registry of all 16 production deep learning architectures."""
+    return hub.get_status()
+
+
+# --- Mobility Deep Learning ---
+
+
+@app.post("/v1/deep/mobility/st-gnn/predict")
+def deep_mobility_st_gnn(body: dict[str, Any]) -> dict[str, Any]:
+    """Spatio-Temporal Graph Neural Net (Graph WaveNet / DCRNN) 5-60 min speed forecasting."""
+    current_speeds = [float(x) for x in body.get("current_speeds", [45.0, 38.0, 52.0, 29.0, 41.0])]
+    adj = body.get("adjacency")
+    return hub.st_gnn.predict_future_speeds(current_speeds, adjacency=adj)
+
+
+@app.post("/v1/deep/mobility/eta/conformal")
+def deep_mobility_eta_conformal(body: dict[str, Any]) -> dict[str, Any]:
+    """Deep residual ensemble ETA with finite-sample conformal prediction bounds (80% & 90%)."""
+    feats = body.get("features")
+    return hub.conformal_eta.predict_conformal(
+        features=feats,
+        distance_km=float(body.get("distance_km", 12.5)),
+        free_flow_speed=float(body.get("free_flow_speed", 45.0)),
+        congestion_factor=float(body.get("congestion_factor", 1.35)),
+        hour_of_day=int(body.get("hour_of_day", 18)),
+        is_weekend=bool(body.get("is_weekend", False)),
+        rain_mm=float(body.get("rain_mm", 0.0)),
+    )
+
+
+@app.post("/v1/deep/mobility/trajectory/predict")
+def deep_mobility_trajectory(body: dict[str, Any]) -> dict[str, Any]:
+    """Transformer encoder destination prediction + trip anomaly autoencoder score."""
+    raw_crumbs = body.get("breadcrumbs") or [[17.3850, 78.4867], [17.3910, 78.4912], [17.4020, 78.4980]]
+    breadcrumbs = [(float(c[0]), float(c[1])) for c in raw_crumbs]
+    raw_favs = body.get("user_favorites")
+    user_favs = [(float(f[0]), float(f[1])) for f in raw_favs] if raw_favs else None
+
+    dest_pred = hub.trajectory_transformer.predict_destination(breadcrumbs, user_favorites=user_favs)
+    anomaly_score = hub.trip_autoencoder.score_trajectory_anomaly(breadcrumbs)
+    return {
+        "destination_prediction": dest_pred,
+        "trajectory_anomaly": anomaly_score,
+    }
+
+
+@app.post("/v1/deep/mobility/vision/inspect")
+def deep_mobility_vision_inspect(body: dict[str, Any]) -> dict[str, Any]:
+    """Neural road vision: surface defect classification + monocular crater depth estimation."""
+    telemetry = body.get("sensor_telemetry")
+    patches = body.get("patch_embeddings")
+    return hub.road_vision.inspect_frame(
+        sensor_telemetry=telemetry,
+        patch_embeddings=patches,
+    )
+
+
+@app.post("/v1/deep/mobility/demand/forecast")
+def deep_mobility_demand_tft(body: dict[str, Any]) -> dict[str, Any]:
+    """Behavioral demand sequence model (TFT) with event surge attenuation."""
+    h3_idx = str(body.get("h3_index") or "8860145b23fffff")
+    history = [float(x) for x in body["history_30d"]] if "history_30d" in body else None
+    return hub.demand_tft.forecast_demand(
+        h3_index=h3_idx,
+        history_30d=history,
+        hour_of_day=int(body.get("hour_of_day", 18)),
+        day_of_week=int(body.get("day_of_week", 4)),
+        event_distance_km=float(body.get("event_distance_km", 2.0)),
+    )
+
+
+@app.post("/v1/deep/mobility/policy/evaluate")
+def deep_mobility_policy_evaluate(body: dict[str, Any]) -> dict[str, Any]:
+    """Offline RL / Conservative Q-Learning policy evaluation for digital twin what-if."""
+    state = [float(x) for x in body.get("state", [0.5, 0.2, 0.8, 0.4, 0.1, 0.9, 0.3, 0.6])]
+    action = int(body.get("action", 0))
+    return hub.rl_policy.evaluate_action(state=state, action=action)
+
+
+# --- Finance Deep Learning ---
+
+
+@app.post("/v1/deep/finance/classify-alert")
+def deep_finance_classify_alert(body: dict[str, Any]) -> dict[str, Any]:
+    """MiniLM/DistilBERT-style subword transformer classifier for transaction SMS / notifications."""
+    text = str(body.get("raw_text") or body.get("text") or "")
+    amt = float(body["amount"]) if "amount" in body and body["amount"] is not None else None
+    vpa = str(body["vpa"]) if "vpa" in body and body["vpa"] else None
+    return hub.txn_classifier.classify(text=text, amount=amt, vpa=vpa)
+
+
+@app.post("/v1/deep/finance/anomaly")
+def deep_finance_anomaly(body: dict[str, Any]) -> dict[str, Any]:
+    """Deep SVDD hypersphere spend anomaly scoring for Opportunity Radar."""
+    return hub.spend_svdd.score_anomaly(
+        amount=float(body.get("amount", 0.0)),
+        hour_of_day=int(body.get("hour_of_day", 12)),
+        merchant=str(body.get("merchant", "")),
+        category=str(body.get("category", "")),
+        is_foreign=bool(body.get("is_foreign", False)),
+        historical_mean=float(body.get("historical_mean", 2500.0)),
+        historical_std=float(body.get("historical_std", 1800.0)),
+    )
+
+
+@app.post("/v1/deep/finance/cashflow-forecast")
+def deep_finance_cashflow_forecast(body: dict[str, Any]) -> dict[str, Any]:
+    """DeepAR probabilistic sequence forecaster: 30/60/90-day balance trajectories."""
+    balance = float(body.get("current_balance", 150000.0))
+    net_flows = [float(x) for x in body["recent_daily_net_flows"]] if "recent_daily_net_flows" in body else None
+    fixed_bills = float(body.get("fixed_obligations_monthly", 35000.0))
+    return hub.cashflow_deepar.forecast_balance(
+        current_balance=balance,
+        recent_daily_net_flows=net_flows,
+        fixed_obligations_monthly=fixed_bills,
+    )
+
+
+@app.post("/v1/deep/finance/regime-risk")
+def deep_finance_regime_risk(body: dict[str, Any]) -> dict[str, Any]:
+    """Hidden Markov 4-state market regime classification + Indian factor tilts."""
+    return hub.regime_risk.classify_regime(
+        volatility_30d=float(body.get("volatility_30d", 0.18)),
+        drawdown_pct=float(body.get("drawdown_pct", -0.04)),
+        yield_spread_bps=float(body.get("yield_spread_bps", 180.0)),
+        fii_flow_crs=float(body.get("fii_flow_crs", 450.0)),
+    )
+
+
+@app.post("/v1/deep/finance/graph/propagate")
+def deep_finance_graph_propagate(body: dict[str, Any]) -> dict[str, Any]:
+    """GNN message-passing shock propagation across financial knowledge graph."""
+    nodes = body.get("asset_nodes") or [
+        {"id": "large_cap_eq", "type": "equity_mutual_fund", "weight": 0.45},
+        {"id": "corp_bond", "type": "debt_fund", "weight": 0.25},
+        {"id": "home_loan", "type": "floating_loan", "weight": 0.30},
+    ]
+    shocks = body.get("stress_shocks") or {"equity_drawdown": -0.15, "repo_hike_bps": 50.0}
+    propagated = hub.gnn_risk.propagate_shock(asset_nodes=nodes, stress_shocks=shocks)
+    return {
+        "propagated_nodes": propagated,
+        "total_nodes": len(propagated),
+        "model": "GNN-MessagePassing-ShockPropagator-v1",
+    }
+
+
+@app.post("/v1/deep/finance/doc/extract")
+def deep_finance_doc_extract(body: dict[str, Any]) -> dict[str, Any]:
+    """Neural document intelligence: PAN, IFSC, salary slips, and tax forms extraction."""
+    text = str(body.get("text") or "")
+    return hub.doc_intel.extract_document(text)
+
+
+# --- Voice Deep Learning ---
+
+
+@app.post("/v1/deep/voice/asr/adapt")
+def deep_voice_asr_adapt(body: dict[str, Any]) -> dict[str, Any]:
+    """Whisper telephony adapter: acoustic SNR compensation & code-switching (EN/HI/TE)."""
+    return hub.whisper_telephony.adapt_audio(
+        sample_rate_hz=int(body.get("sample_rate_hz", 8000)),
+        snr_db=float(body.get("snr_db", 14.5)),
+        text_sample=str(body.get("text_sample", "")),
+    )
+
+
+@app.post("/v1/deep/voice/diarize")
+def deep_voice_diarize(body: dict[str, Any]) -> dict[str, Any]:
+    """Neural speaker diarization using x-vector embeddings & agglomerative clustering."""
+    feats = body.get("segment_features") or [[0.2] * 16, [0.8] * 16, [0.22] * 16, [0.79] * 16]
+    num_speakers = int(body["num_speakers"]) if "num_speakers" in body and body["num_speakers"] else None
+    return hub.speaker_diarizer.diarize(segment_features=feats, num_speakers=num_speakers)
+
+
+@app.post("/v1/deep/voice/dense-search")
+def deep_voice_dense_search(body: dict[str, Any]) -> dict[str, Any]:
+    """BGE-M3-style dense semantic retrieval across conversation transcripts."""
+    query = str(body.get("query") or "")
+    corpus = [str(x) for x in body.get("corpus", [])]
+    top_k = int(body.get("top_k", 5))
+    return hub.dense_retriever.search(query=query, corpus=corpus, top_k=top_k)
+
+
+@app.post("/v1/deep/voice/rerank")
+def deep_voice_rerank(body: dict[str, Any]) -> dict[str, Any]:
+    """Cross-encoder query-passage reranking for grounded conversation QA."""
+    query = str(body.get("query") or "")
+    passages = [str(x) for x in body.get("passages", [])]
+    return hub.cross_reranker.rerank(query=query, passages=passages)
+
+
+@app.post("/v1/deep/voice/urgency")
+def deep_voice_urgency(body: dict[str, Any]) -> dict[str, Any]:
+    """Wav2Vec2/HuBERT affect classifier & escalation risk detector."""
+    feats = body.get("acoustic_features")
+    return hub.urgency_detector.detect(
+        acoustic_features=feats,
+        pitch_variance=float(body.get("pitch_variance", 45.0)),
+        energy_rms=float(body.get("energy_rms", 0.35)),
+        speech_rate_wpm=float(body.get("speech_rate_wpm", 165.0)),
+        sentiment_polarity=float(body.get("sentiment_polarity", -0.3)),
+    )
+
+
+# --- Cross-Cutting & Continuous Learning ---
+
+
+@app.post("/v1/deep/multimodal/user-twin")
+def deep_multimodal_user_twin(body: dict[str, Any]) -> dict[str, Any]:
+    """Multi-modal fusion: Voice + Finance + Mobility into unified latent User Twin."""
+    voice_v = body.get("voice_summary")
+    fin_v = body.get("finance_summary")
+    mob_v = body.get("mobility_summary")
+    uid = str(body.get("user_id") or "usr_default")
+    return hub.multimodal_fusion.fuse(
+        voice_summary=voice_v,
+        finance_summary=fin_v,
+        mobility_summary=mob_v,
+        user_id=uid,
+    )
+
+
+@app.post("/v1/deep/evaluation/drift")
+def deep_evaluation_drift(body: dict[str, Any]) -> dict[str, Any]:
+    """Kolmogorov-Smirnov two-sample feature drift detector."""
+    ref = [float(x) for x in body.get("reference_sample", [])]
+    cur = [float(x) for x in body.get("current_sample", [])]
+    feat = str(body.get("feature_name", "feature_0"))
+    return hub.drift_detector.detect_drift(reference_sample=ref, current_sample=cur, feature_name=feat)
+
+
+@app.post("/v1/deep/evaluation/benchmark")
+def deep_evaluation_benchmark(body: dict[str, Any]) -> dict[str, Any]:
+    """Run model evaluation harness (MAE, RMSE, MAPE, Conformal empirical coverage)."""
+    y_true = [float(x) for x in body.get("y_true", [25.0, 30.0, 35.0, 28.0, 40.0])]
+    y_pred = [float(x) for x in body.get("y_pred", [24.5, 31.0, 34.0, 29.5, 38.0])]
+    y_lower = [float(x) for x in body["y_lower"]] if "y_lower" in body else None
+    y_upper = [float(x) for x in body["y_upper"]] if "y_upper" in body else None
+    return hub.evaluation_harness.evaluate_predictions(
+        y_true=y_true,
+        y_pred=y_pred,
+        y_lower=y_lower,
+        y_upper=y_upper,
+    )

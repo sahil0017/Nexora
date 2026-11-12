@@ -28,6 +28,7 @@ from typing import Any
 
 from nexora.finance.policy import FinancePolicy, load_policy
 from nexora.gateway_bridge import invoke_with_privacy_firewall
+from nexora.deep_learning import hub
 
 _RE_AMOUNT = re.compile(r"(?:INR|Rs\.?|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)", re.IGNORECASE)
 _RE_BALANCE = re.compile(
@@ -126,6 +127,14 @@ class FinanceIntelligenceNetwork:
         merchant, category, is_discretionary, is_sub = self._classify_merchant_and_category(raw_text, upi_vpa, txn_type)
         is_internal = any(w in lower for w in cfg["internal_transfer_keywords"])
 
+        # Deep Learning Transformer Classification fallback/augmentation
+        neural_pred = hub.txn_classifier.classify(raw_text, vpa=upi_vpa)
+        if category in ("Uncategorized", "Other Income") and neural_pred.get("category") not in ("Uncategorized", "Other Income"):
+            category = str(neural_pred["category"])
+            merchant = str(neural_pred["merchant"])
+            is_discretionary = bool(neural_pred["is_discretionary"])
+            is_sub = is_sub or bool(neural_pred["is_recurring"])
+
         dedupe_seed = f"{masked_account or ''}:{txn_type}:{abs(amount):.2f}:{utr_ref or raw_text[:48]}"
         external_txn_id = "alt_" + hashlib.sha256(dedupe_seed.encode("utf-8")).hexdigest()[:20]
         vpa_blind_idx = hashlib.sha256(f"nexora_blind:{upi_vpa}".encode("utf-8")).hexdigest() if upi_vpa else None
@@ -148,6 +157,7 @@ class FinanceIntelligenceNetwork:
             "is_discretionary": is_discretionary,
             "is_recurring_candidate": is_sub or channel == "nach",
             "classification_confidence": cfg["confidence_with_amount"] if amt_match else cfg["confidence_without_amount"],
+            "neural_classification": neural_pred,
             "policy_version": self.policy.version,
             "ingested_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -55,6 +55,38 @@ flowchart LR
 ### 4. Cross-Domain Copilot (`apps/mobile/src/features/assistant`)
 - Unified conversational assistant routing across Mobility, Wealth, Voice & Call Notes, Health, and Work with explainability factors, citations, and privacy-gated context toggles.
 
+### 5. Unified Deep Learning & Continuous Verification Platform (`intelligence/ml-platform/src/nexora/deep_learning`, `intelligence/evaluation`)
+Comprehensive production deep learning suite covering 16 specialized neural architectures across all four pillars:
+
+- **🚗 Mobility Deep ML**:
+  - `SpatioTemporalGNN`: 2-hop bidirectional spatial diffusion + dilated gated temporal convolutions (TCN) forecasting 5, 15, 30, and 60-min segment speeds (`POST /v1/deep/mobility/st-gnn/predict`).
+  - `DeepConformalETAPredictor`: Calibrated residual MLP providing finite-sample guaranteed 80% & 90% conformal coverage intervals (`POST /v1/deep/mobility/eta/conformal`).
+  - `TrajectoryTransformer`: Multi-head self-attention encoder predicting trip destinations from breadcrumbs (`POST /v1/deep/mobility/trajectory/predict`).
+  - `TripAnomalyAutoencoder`: Sequence autoencoder scoring route detours and trip outliers via reconstruction error.
+  - `NeuralRoadVision`: DINOv2-style surface defect classifier (pothole, waterlogging, flood) with monocular crater depth estimation (`POST /v1/deep/mobility/vision/inspect`).
+  - `BehavioralDemandTFT`: Temporal Fusion Transformer sequence model with distance-attenuated event surge modeling (`POST /v1/deep/mobility/demand/forecast`).
+  - `OfflineRLPolicySimulator`: Conservative Q-learning policy evaluation for digital twin signal & routing what-if experiments (`POST /v1/deep/mobility/policy/evaluate`).
+
+- **💰 Finance Deep ML**:
+  - `NeuralTransactionClassifier`: MiniLM / DistilBERT-style subword transformer classifier for SMS and alert text (`POST /v1/deep/finance/classify-alert`).
+  - `DeepSVDDAnomalyDetector`: Deep Support Vector Data Description hypersphere anomaly detector for spend fraud and unusual spikes (`POST /v1/deep/finance/anomaly`).
+  - `DeepARCashFlowForecaster`: Autoregressive sequence model predicting 30/60/90-day balance trajectories ($p10, p50, p90$) (`POST /v1/deep/finance/cashflow-forecast`).
+  - `RegimeSwitchingRiskModel`: Hidden Markov 4-state regime switcher (Bull, High Volatility, Mean Reverting, Liquidity Squeeze) with Indian equity factor tilts (`POST /v1/deep/finance/regime-risk`).
+  - `GNNRiskPropagator`: Message-passing shock propagation across equity, debt, floating loans, and deposits (`POST /v1/deep/finance/graph/propagate`).
+  - `NeuralDocIntelligence`: Transformer parser extracting PAN, IFSC, salary slips, and tax forms (`POST /v1/deep/finance/doc/extract`).
+
+- **🎙️ Voice Deep ML**:
+  - `WhisperTelephonyASRAdapter`: Acoustic SNR compensation, telephony codec selection, and Hinglish/Tenglish code-switching detection (`POST /v1/deep/voice/asr/adapt`).
+  - `NeuralSpeakerDiarizer`: 16-dim neural x-vector speaker embeddings with agglomerative cosine clustering (`POST /v1/deep/voice/diarize`).
+  - `DenseMemoryRetriever`: BGE-M3 dual-encoder dense semantic retrieval across conversation transcripts (`POST /v1/deep/voice/dense-search`).
+  - `CrossEncoderReranker`: Cross-attention joint query-passage reranker for grounded QA (`POST /v1/deep/voice/rerank`).
+  - `AcousticUrgencyEmotionDetector`: Wav2Vec2/HuBERT affect classifier & caller escalation risk detector (`POST /v1/deep/voice/urgency`).
+
+- **🌐 Cross-Cutting & Continuous Learning**:
+  - `MultiModalUserTwinFusion`: Fuses Voice, Finance, and Mobility into a unified 32-dim latent user twin with cross-modal behavioral correlation discovery (`POST /v1/deep/multimodal/user-twin`).
+  - `DriftDetector`: Two-sample Kolmogorov-Smirnov continuous feature drift detector (`POST /v1/deep/evaluation/drift`).
+  - `ModelEvaluationHarness` & `intelligence/evaluation/benchmark.py`: Continuous verification suite testing MAE, RMSE, MAPE, empirical conformal coverage, and shadow-mode latency overhead.
+
 ## Event-Driven Flow
 
 1. **Atomic Write + Outbox Enqueue (`platform/api`)**
@@ -133,7 +165,7 @@ sequenceDiagram
 |---|---|
 | Mobile / Web | React Native (Expo) + TypeScript + React Query + Zustand + Native Caller/CallKit Config Plugin |
 | Control-Plane API | Go + Chi modular monolith (`platform/api`) |
-| Intelligence & ML | Python + FastAPI + PyTorch (`intelligence/ml-platform`) |
+| Intelligence & ML | Python + FastAPI + PyTorch / NumPy / SciPy + Spatio-Temporal GNN + Conformal Predictors (`intelligence/ml-platform`, `intelligence/evaluation`) |
 | Primary DB | PostgreSQL 16 + PostGIS (per-module schemas `0001`–`0007` + transactional outbox) |
 | Cache & Geo | Redis 7.4 |
 | Event Bus | PostgreSQL Outbox → AWS SNS / SQS (or Redpanda/Kafka locally) |
@@ -146,7 +178,8 @@ sequenceDiagram
 ```
 apps/mobile/                Expo React Native app (Home, Explore, Copilot, Profile + Mobility, Finance, Voice & Privacy workspaces + plugins/withNexoraCallerId.js)
 platform/api/               Go modular monolith API (platform, identity, outbox, cache, mobility, finance, voice, health, work + migrations 0001-0007)
-intelligence/ml-platform/   FastAPI ML inference service, SQS event consumer, geospatial, finance & voice intelligence engines
+intelligence/ml-platform/   FastAPI ML inference service, Deep Learning Hub (16 models), SQS event consumer, geospatial, finance & voice intelligence engines
+intelligence/evaluation/    Continuous learning verification & benchmark harness (drift detection, conformal empirical coverage, latency benchmarks)
 contracts/                  OpenAPI v1 spec (contracts/openapi/) + JSON event schemas (contracts/events/)
 infra/                      AWS SAM/Docker deploy templates, Postgres, Prometheus, Grafana configs
 scripts/                    Deployment & ops helper scripts (deploy-aws.sh)
