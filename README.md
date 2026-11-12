@@ -1,18 +1,19 @@
 # NEXORA
 
-Intelligent life platform unifying **Mobility (MoveSmart)**, **Wealth & Finance**, **Copilot**, **Health**, and **Work** on an event-driven architecture.
+Intelligent life platform unifying **Mobility (MoveSmart)**, **Wealth & Finance**, **Voice & Call Notes**, **Copilot**, **Health**, and **Work** on an event-driven architecture.
 
 ## Architecture Overview
 
-NEXORA separates **transactional state and control plane** (Go + PostgreSQL/PostGIS + Redis) from **online learning and inference** (Python + FastAPI), connected asynchronously through a **Transactional Outbox → AWS SNS/SQS (or local relay) → Online Intelligence Consumer** pipeline, with **Server-Sent Events (SSE)** for real-time client updates.
+NEXORA separates **transactional state and control plane** (Go + PostgreSQL/PostGIS + Redis) from **online learning and inference** (Python + FastAPI), connected asynchronously through a **Transactional Outbox → AWS SNS/SQS (or local relay) → Online Intelligence Consumer** pipeline, with **Server-Sent Events (SSE)** for real-time client updates across Finance and Voice.
 
 ```mermaid
 flowchart LR
-    Mobile["Mobile / Web Client<br/>(Expo React Native)"]
-    API["Go Control-Plane API<br/>(platform/api · Chi)"]
-    PG[("PostgreSQL + PostGIS<br/>Domain Tables + platform.event_outbox")]
-    Redis[("Redis<br/>Spatial Geo + Twin Cache")]
+    Mobile["Mobile / Web Client<br/>(Expo React Native + Native Caller/CallKit Plugin)"]
+    API["Go Control-Plane API<br/>(platform/api · Chi Modular Monolith)"]
+    PG[("PostgreSQL 16 + PostGIS<br/>mobility · finance · voice · platform.event_outbox")]
+    Redis[("Redis 7.4<br/>Geo Radar + Twin & Voice Overview Cache")]
     DDB[("AWS DynamoDB<br/>Documents / Notes")]
+    S3[("S3 / Local Vault<br/>Presigned Audio & Transcripts")]
     Relay["OutboxRelay<br/>(<5ms channel wakeup + 5s poll)"]
     SNS["AWS SNS Topic<br/>(Event Fan-out)"]
     SQS["AWS SQS Queue<br/>(20s Long-Poll)"]
@@ -20,10 +21,12 @@ flowchart LR
     State["OnlineIntelligenceState<br/>(Idempotent Event Store + H3 Buffers)"]
 
     Mobile -- "REST / HTTPS" --> API
-    API -- "SSE (/api/v1/finance/stream)" --> Mobile
+    Mobile -- "Presigned PUT / GET" --> S3
+    API -- "SSE (/finance/stream · /voice/stream)" --> Mobile
     API -- "Atomic Tx + EnqueueOutbox()" --> PG
     API -- "Geo Radar / Cache" --> Redis
     API -- "Documents" --> DDB
+    API -- "Presign + Artifacts" --> S3
     PG -- "SELECT unpublished (batch 25)" --> Relay
     Relay -- "Publish Envelope" --> SNS
     SNS --> SQS
@@ -32,10 +35,30 @@ flowchart LR
     ML --> State
 ```
 
+## Core Domain Modules
+
+### 1. Mobility — MoveSmart (`platform/api/internal/modules/mobility`, `apps/mobile/src/features/move`)
+- Turn-by-turn navigation, live corridor telemetry, traffic anomaly detection, road hazard reporting, and H3 spatial hotspot & demand forecasting (`traffic_forecaster.py`, `demand_forecaster.py`, `eta_engine.py`, `city_digital_twin.py`).
+
+### 2. Wealth & Finance (`platform/api/internal/modules/finance`, `apps/mobile/src/features/finance`)
+- Net worth & financial digital twin, multi-account ledger & UPI/bank alert parsing, tax regime & LRS planning, AI CFO insights, Redis twin cache invalidation (`fin:twin:v1:<userID>`), and real-time SSE push (`/api/v1/finance/stream`).
+
+### 3. Voice & Call Notes (`platform/api/internal/modules/voice`, `intelligence/ml-platform/src/nexora/voice`)
+- **Capture & Streaming Sessions**: Quick notes, audio uploads via presigned S3 PUT/GET (`s3_presign.go`), dual-track live call/meeting streaming sessions (`/voice/sessions/*`), and downloadable transcript/audio artifacts (`GET /api/v1/voice/conversations/{id}/download`).
+- **Speech & Understanding Pipeline**: VAD/SNR audio quality routing (`audio_pipeline.py`), speaker clustering & interaction dynamics (`speech_engine.py`), commitments/decisions/knowledge graph extraction, contradiction reasoning, and source-grounded Q&A (`understanding_engine.py`, `ir.py`).
+- **Native Caller ID & Call History**:
+  - Phone numbers are SHA-256 hashed and masked (`caller_directory.go`, `call_logs.go`) before persistence in `voice.caller_directory` and `voice.call_logs`.
+  - **Android**: `READ_CALL_LOG` historic call sync + `CallScreeningService` (`NexoraCallerIdModule.kt`, `withNexoraCallerId.js`).
+  - **iOS**: `CNContactStore` contacts sync + CallKit `CXCallDirectoryProvider` & live `CXCallObserver` (with CSV/JSON export support for historic logs).
+- **Cryptographic Provenance**: SHA-256 digest, HMAC seal, utterance Merkle root, hash-chained `voice.custody_events`, and Legal Hold controls (`crypto.go`).
+
+### 4. Cross-Domain Copilot (`apps/mobile/src/features/assistant`)
+- Unified conversational assistant routing across Mobility, Wealth, Voice & Call Notes, Health, and Work with explainability factors, citations, and privacy-gated context toggles.
+
 ## Event-Driven Flow
 
 1. **Atomic Write + Outbox Enqueue (`platform/api`)**
-   - Every domain mutation (`mobility/repository.go`, `finance/repository.go`) writes its business row and calls `events.EnqueueOutbox(...)` inside the **same PostgreSQL transaction**, guaranteeing zero lost events on crash.
+   - Every domain mutation (`mobility/repository.go`, `finance/repository.go`, `voice/repository.go`) writes its business row and calls `events.EnqueueOutbox(...)` inside the **same PostgreSQL transaction**, guaranteeing zero lost events on crash.
    - `EnqueueOutbox` inserts into `platform.event_outbox` and calls `NotifyOutbox()` (non-blocking buffered channel) to wake `OutboxRelay` immediately (`<5 ms`), backed by a 5-second fallback ticker.
 
 2. **Relay & Envelope Wrapping (`platform/api/internal/platform/events/outbox.go`)**
@@ -51,10 +74,11 @@ flowchart LR
      - `location.observed.v1` / `location.batch` → cleans trajectories, indexes H3 cells, updates `MobilityDemandForecaster` & hotspot discovery
      - `trip.started.v1` / `trip.completed.v1` / `route.feedback.v1` → updates demand & route quality feedback
      - `hazard.reported.v1` → updates active road hazard ring buffer
-     - `finance.transaction.ingested.v1` → feeds cross-domain finance event stream
+     - `finance.*` → feeds cross-domain finance event stream
+     - `voice.*` → feeds voice intelligence event stream
 
 4. **Cache Invalidation & Real-Time UI Push (`Redis` + `SSE`)**
-   - Finance mutations call `invalidateAndBroadcast(ctx, userID, event)`, which deletes the cached snapshot (`fin:twin:v1:<userID>`) in Redis and pushes an event onto per-user subscriber channels streamed over `GET /api/v1/finance/stream` (SSE).
+   - Finance and Voice mutations call `invalidateAndBroadcast(ctx, userID, event)`, which deletes the cached snapshot (`fin:twin:v1:<userID>` or `voice:overview:v1:<userID>`) in Redis and pushes an event onto per-user subscriber channels streamed over `GET /api/v1/finance/stream` and `GET /api/v1/voice/stream` (SSE).
    - Mobility trip breadcrumbs update Redis spatial geo sets for low-latency nearby active-trip radar queries.
 
 ```mermaid
@@ -65,18 +89,18 @@ sequenceDiagram
     participant Bus as AWS SNS / SQS
     participant ML as Python ML (nexora-ml)
 
-    App->>API: POST /api/v1/mobility/trips/start (or /finance/transactions)
+    App->>API: POST /api/v1/{mobility|finance|voice}/...
     activate API
     API->>DB: BEGIN TX -> Domain INSERT + INSERT platform.event_outbox -> COMMIT
     API-->>API: NotifyOutbox() + invalidateAndBroadcast()
-    API-->>App: 201 Created (+ SSE push for Finance subscribers)
+    API-->>App: 200/201 (+ SSE push for Finance / Voice subscribers)
     deactivate API
 
     API->>DB: FlushBatch() reads unpublished outbox rows
     API->>Bus: Publish event envelope (SNS -> SQS)
     API->>ML: POST /v1/events/ingest (optional inline relay)
     Bus->>ML: SQS 20s long-poll receives envelope
-    ML->>ML: Deduplicate event_id -> update traffic/demand/H3/finance state
+    ML->>ML: Deduplicate event_id -> update traffic/demand/H3/finance/voice state
     API->>DB: UPDATE platform.event_outbox SET published_at = now()
 ```
 
@@ -93,6 +117,12 @@ sequenceDiagram
 | `transit.updated.v1` | Transit Feed | Updates stop arrival / freshness signals |
 | `prediction.generated.v1` | Intelligence Service | Records generated forecast metadata |
 | `finance.transaction.ingested.v1` | Finance Repository | Streams new financial activity to ML & SSE |
+| `voice.recording.captured.v1` | Voice Repository | Records new voice/call capture metadata |
+| `voice.audio.analyzed.v1` | Voice Pipeline | Publishes VAD/SNR acoustic quality metrics |
+| `voice.speech.transcribed.v1` | Voice Pipeline | Publishes speaker-attributed utterances |
+| `voice.conversation.understood.v1` | Voice Pipeline | Publishes decisions, commitments & entities |
+| `voice.action.suggested.v1` | Voice Pipeline | Publishes human-in-the-loop follow-up suggestions |
+| `voice.evidence.sealed.v1` | Voice Vault | Publishes Merkle root & custody seal verification |
 | `work.task.created.v1` | Work Module | Task lifecycle envelope |
 
 ---
@@ -101,22 +131,22 @@ sequenceDiagram
 
 | Layer | Technology |
 |---|---|
-| Mobile / Web | React Native (Expo) + TypeScript + React Query + Zustand |
+| Mobile / Web | React Native (Expo) + TypeScript + React Query + Zustand + Native Caller/CallKit Config Plugin |
 | Control-Plane API | Go + Chi modular monolith (`platform/api`) |
 | Intelligence & ML | Python + FastAPI + PyTorch (`intelligence/ml-platform`) |
-| Primary DB | PostgreSQL 16 + PostGIS (per-module schemas + transactional outbox) |
+| Primary DB | PostgreSQL 16 + PostGIS (per-module schemas `0001`–`0007` + transactional outbox) |
 | Cache & Geo | Redis 7.4 |
 | Event Bus | PostgreSQL Outbox → AWS SNS / SQS (or Redpanda/Kafka locally) |
 | Document Store | AWS DynamoDB (serverless HTTPS) |
-| Object Storage | MinIO (local) / S3-compatible |
+| Object Storage | MinIO (local) / AWS S3 (presigned PUT/GET) |
 | Observability | Prometheus + Grafana |
 
 ## Repository Layout
 
 ```
-apps/mobile/                Expo React Native app (Home, Explore, Copilot, Profile + Mobility & Wealth workspaces)
-platform/api/               Go modular monolith API (platform, identity, outbox, cache, mobility, finance)
-intelligence/ml-platform/   FastAPI ML inference service, SQS event consumer, geospatial & finance engines
+apps/mobile/                Expo React Native app (Home, Explore, Copilot, Profile + Mobility, Finance, Voice & Privacy workspaces + plugins/withNexoraCallerId.js)
+platform/api/               Go modular monolith API (platform, identity, outbox, cache, mobility, finance, voice, health, work + migrations 0001-0007)
+intelligence/ml-platform/   FastAPI ML inference service, SQS event consumer, geospatial, finance & voice intelligence engines
 contracts/                  OpenAPI v1 spec (contracts/openapi/) + JSON event schemas (contracts/events/)
 infra/                      AWS SAM/Docker deploy templates, Postgres, Prometheus, Grafana configs
 scripts/                    Deployment & ops helper scripts (deploy-aws.sh)
@@ -147,11 +177,13 @@ npm install
 npm run web       # or npm run ios / npm run android
 ```
 
-### 3. Tests & Formatting
+### 3. Tests, Typecheck & CI
 
 ```bash
-make api-test     # cd platform/api && go test ./...
-make ml-test      # cd intelligence/ml-platform && python -m pytest
+make ci           # runs api-test (go vet + go test -race), ml-test (pytest), mobile-test (tsc --noEmit) & lint
+make api-test     # cd platform/api && go vet ./... && go test -race ./...
+make ml-test      # cd intelligence/ml-platform && python3 -m pytest -v
+make mobile-test  # cd apps/mobile && npm run typecheck
 make fmt          # cd platform/api && go fmt ./...
 ```
 
@@ -169,4 +201,4 @@ make aws-logs
 
 - **Contracts first:** `contracts/openapi/nexora-v1.yaml` and `contracts/events/` are the sources of truth.
 - **Boundary separation:** Go owns business logic, persistence, and outbox transactions; Python owns inference and online learning.
-- **Privacy by design:** Never log raw GPS coordinates, bank account numbers, PAN, Aadhaar, or unmasked UPI IDs.
+- **Privacy by design:** Never log raw GPS coordinates, phone numbers, bank account numbers, PAN, Aadhaar, or unmasked UPI IDs.
