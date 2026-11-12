@@ -57,7 +57,7 @@ class NexoraCallerIdModule(private val reactCtx: ReactApplicationContext) : Reac
             putBoolean("supported", rm?.isRoleAvailable(RoleManager.ROLE_CALL_SCREENING) == true)
             putBoolean("granted", held)
         }
-        val act = currentActivity
+        val act = reactCtx.currentActivity
         if (!held && act != null && rm != null && rm.isRoleAvailable(RoleManager.ROLE_CALL_SCREENING)) {
             act.startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING), 9042)
         }
