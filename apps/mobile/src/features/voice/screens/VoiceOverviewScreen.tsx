@@ -471,7 +471,7 @@ export default function VoiceOverviewScreen() {
 
   return (
     <Screen
-      title="Voice & Call Notes"
+      title="Voice Intelligence"
       subtitle="Calls, meetings & notes turned into transcripts and tasks"
       badge={sseConnected ? 'LIVE SYNC' : 'READY'}
       rightAction={

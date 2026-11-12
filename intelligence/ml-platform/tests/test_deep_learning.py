@@ -190,6 +190,45 @@ class TestDeepLearningPlatform(unittest.TestCase):
         self.assertTrue(body["has_salary_slip_markers"])
         self.assertIn(145000.0, body["extracted_amounts"])
 
+    def test_dynamic_merchant_registration_and_policy_integration(self) -> None:
+        # Dynamically register a new niche merchant at runtime
+        reg_res = self.client.post(
+            "/v1/deep/finance/merchants/register",
+            json={"keyword": "thirdwave", "name": "Third Wave Coffee", "category": "food_dining", "recurring": False},
+        )
+        self.assertEqual(reg_res.status_code, 200)
+        reg_data = reg_res.json()
+        self.assertEqual(reg_data["status"], "success")
+        self.assertEqual(reg_data["registered_count"], 1)
+
+        # Batch registration
+        batch_res = self.client.post(
+            "/v1/deep/finance/merchants/register",
+            json={
+                "merchants": [
+                    {"keyword": "urbancompany", "name": "Urban Company", "category": "utilities_bills", "recurring": False},
+                    {"keyword": "cultfit", "name": "Cult.fit", "category": "health_medical", "recurring": True},
+                ]
+            },
+        )
+        self.assertEqual(batch_res.status_code, 200)
+        self.assertEqual(batch_res.json()["registered_count"], 2)
+
+        # Verify dynamic classification immediately picks up the new merchants
+        classify_res = self.client.post(
+            "/v1/deep/finance/classify-alert",
+            json={"raw_text": "INR 320 paid at thirdwave roasters via UPI", "amount": 320.0},
+        )
+        self.assertEqual(classify_res.status_code, 200)
+        self.assertEqual(classify_res.json()["merchant"], "Third Wave Coffee")
+        self.assertEqual(classify_res.json()["category"], "Food Dining")
+
+        # Verify listing endpoint
+        list_res = self.client.get("/v1/deep/finance/merchants")
+        self.assertEqual(list_res.status_code, 200)
+        self.assertIn("thirdwave", list_res.json()["merchants"])
+        self.assertIn("urbancompany", list_res.json()["merchants"])
+
     # =========================================================================
     # 4. Voice Deep Learning Models & Endpoints
     # =========================================================================
@@ -203,6 +242,41 @@ class TestDeepLearningPlatform(unittest.TestCase):
         self.assertTrue(body["has_code_switching"])
         self.assertGreaterEqual(body["acoustic_clarity_score"], 0.2)
         self.assertEqual(body["telephony_codec"], "G.711 Narrowband")
+
+    def test_dynamic_code_switch_registration_and_dialects(self) -> None:
+        # Dynamically register custom Tamil & Malayalam dialect tokens at runtime
+        reg_res = self.client.post(
+            "/v1/deep/voice/code-switch/register",
+            json={
+                "tokens": {
+                    "eppadi": "ta",
+                    "nandri": "ta",
+                    "sherikkum": "ml",
+                    "enthaanu": "ml",
+                }
+            },
+        )
+        self.assertEqual(reg_res.status_code, 200)
+        reg_data = reg_res.json()
+        self.assertEqual(reg_data["status"], "success")
+        self.assertIn("en-ta", reg_data["supported_languages"])
+        self.assertIn("en-ml", reg_data["supported_languages"])
+
+        # Test audio adaptation with Malayalam code-switching
+        adapt_res = self.client.post(
+            "/v1/deep/voice/asr/adapt",
+            json={"sample_rate_hz": 8000, "snr_db": 22.0, "text_sample": "Hello sir, enthaanu situation, sherikkum report venam"},
+        )
+        self.assertEqual(adapt_res.status_code, 200)
+        adapt_data = adapt_res.json()
+        self.assertTrue(adapt_data["has_code_switching"])
+        self.assertEqual(adapt_data["primary_language"], "en-ml")
+        self.assertIn("ml", adapt_data["detected_code_switch_languages"])
+
+        # Verify listing lexicon endpoint
+        lex_res = self.client.get("/v1/deep/voice/code-switch/lexicon")
+        self.assertEqual(lex_res.status_code, 200)
+        self.assertGreater(lex_res.json()["total_tokens"], 30)
 
     def test_neural_speaker_diarizer(self) -> None:
         res = self.client.post("/v1/deep/voice/diarize", json={"num_speakers": 2})

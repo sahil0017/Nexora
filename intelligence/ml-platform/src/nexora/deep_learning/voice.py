@@ -16,7 +16,9 @@ Implements:
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import os
 import re
 from typing import Any
 
@@ -44,17 +46,87 @@ def _deterministic_weights(name: str, shape: tuple[int, ...], scale: float = 0.1
 class WhisperTelephonyASRAdapter:
     """Multilingual Whisper adapter customized for noisy Indian telephony and code-switching."""
 
-    def __init__(self) -> None:
-        self.supported_languages = ["en", "hi", "te", "en-hi", "en-te"]
-        self.code_switch_lexicon = {
-            "kal": "hi",
-            "theek": "hi",
-            "bhai": "hi",
-            "karna": "hi",
-            "repu": "te",
-            "ippudu": "te",
-            "avunu": "te",
-            "ledu": "te",
+    def __init__(
+        self,
+        supported_languages: list[str] | None = None,
+        custom_lexicon: dict[str, str] | None = None,
+    ) -> None:
+        self.supported_languages = list(
+            supported_languages
+            or ["en", "hi", "te", "ta", "kn", "mr", "bn", "en-hi", "en-te", "en-ta", "en-kn", "en-mr", "en-bn"]
+        )
+        self.code_switch_lexicon: dict[str, str] = {}
+        self._load_baseline_lexicon()
+        if custom_lexicon:
+            self.code_switch_lexicon.update(custom_lexicon)
+        self._load_from_env_file()
+
+    def _load_baseline_lexicon(self) -> None:
+        """Comprehensive multi-dialect code-switch lexicon for Indian telephony."""
+        baseline: dict[str, str] = {
+            # Hindi / Hinglish
+            "kal": "hi", "theek": "hi", "bhai": "hi", "karna": "hi", "karo": "hi",
+            "hoga": "hi", "haan": "hi", "nahi": "hi", "achha": "hi", "kya": "hi",
+            "kyun": "hi", "shukriya": "hi", "dhanyavaad": "hi", "matlab": "hi",
+            "samajh": "hi", "bolo": "hi", "dekho": "hi", "aaj": "hi", "chahiye": "hi",
+            # Telugu / Tenglish
+            "repu": "te", "ippudu": "te", "avunu": "te", "ledu": "te", "enti": "te",
+            "cheppu": "te", "chudu": "te", "ela": "te", "ekkada": "te", "kavali": "te",
+            "vaddu": "te", "cheyyali": "te", "chala": "te", "dhanyavadamulu": "te",
+            "baga": "te", "vachanu": "te", "undandi": "te", "chesanu": "te",
+            # Tamil / Tanglish
+            "aama": "ta", "illa": "ta", "ippo": "ta", "naalaiki": "ta", "enna": "ta",
+            "sollinga": "ta", "theriyum": "ta", "vanga": "ta", "ponga": "ta", "nandri": "ta",
+            "eppadi": "ta", "vandhuten": "ta",
+            # Kannada / Kanglish
+            "houdu": "kn", "ega": "kn", "naale": "kn", "enu": "kn",
+            "heli": "kn", "beku": "kn", "beda": "kn", "dhanyavadagalu": "kn", "hege": "kn",
+            # Marathi
+            "ahe": "mr", "kasa": "mr", "kadhi": "mr", "kiti": "mr",
+            "dhanyawad": "mr", "kuthe": "mr", "sangato": "mr",
+            # Bengali
+            "hobe": "bn", "haye": "bn", "achhe": "bn", "keno": "bn", "kobe": "bn",
+            "dhonnobad": "bn", "kothay": "bn",
+        }
+        self.code_switch_lexicon.update(baseline)
+
+    def _load_from_env_file(self) -> None:
+        """Load external vocabulary file if configured in environment."""
+        path = os.getenv("NEXORA_VOICE_LEXICON_PATH")
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        self.register_code_switch_tokens(data)
+            except Exception:
+                pass
+
+    def register_code_switch_tokens(self, tokens: dict[str, str], language: str | None = None) -> int:
+        """Dynamically register code-switching tokens and associated language pairs."""
+        added = 0
+        for token, lang in tokens.items():
+            clean_tok = token.strip().lower()
+            target_lang = (language or lang).strip().lower()
+            if clean_tok and target_lang:
+                self.code_switch_lexicon[clean_tok] = target_lang
+                paired = f"en-{target_lang}"
+                if target_lang not in self.supported_languages:
+                    self.supported_languages.append(target_lang)
+                if paired not in self.supported_languages:
+                    self.supported_languages.append(paired)
+                added += 1
+        return added
+
+    def get_lexicon(self) -> dict[str, Any]:
+        """Return active dynamic code-switch vocabulary summary."""
+        by_lang: dict[str, int] = {}
+        for l in self.code_switch_lexicon.values():
+            by_lang[l] = by_lang.get(l, 0) + 1
+        return {
+            "total_tokens": len(self.code_switch_lexicon),
+            "supported_languages": self.supported_languages,
+            "tokens_per_language": by_lang,
         }
 
     def process_telephony_audio(
@@ -83,13 +155,17 @@ class WhisperTelephonyASRAdapter:
                 )
 
         detected_lang = hint_language
-        if any(e["switched_to_language"] == "hi" for e in code_switch_events):
-            detected_lang = "en-hi"
-        elif any(e["switched_to_language"] == "te" for e in code_switch_events):
-            detected_lang = "en-te"
+        detected_switch_langs = list(dict.fromkeys(e["switched_to_language"] for e in code_switch_events))
+        if detected_switch_langs:
+            primary_switched = detected_switch_langs[0]
+            if hint_language.lower() in ("en", "english"):
+                detected_lang = f"en-{primary_switched}"
+            else:
+                detected_lang = primary_switched
 
         return {
             "primary_language": detected_lang,
+            "detected_code_switch_languages": detected_switch_langs,
             "acoustic_clarity_score": acoustic_clarity,
             "has_code_switching": len(code_switch_events) > 0,
             "code_switching_events": code_switch_events,

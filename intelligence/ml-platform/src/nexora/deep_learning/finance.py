@@ -17,7 +17,9 @@ Implements:
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import os
 import re
 from typing import Any
 
@@ -52,7 +54,13 @@ CATEGORIES = [
 class NeuralTransactionClassifier:
     """MiniLM / DistilBERT-style subword transformer classifier for raw financial alerts and SMS."""
 
-    def __init__(self, vocab_dim: int = 32, num_classes: int = len(CATEGORIES)) -> None:
+    def __init__(
+        self,
+        vocab_dim: int = 32,
+        num_classes: int = len(CATEGORIES),
+        initial_lexicon: dict[str, tuple[str, str, bool]] | None = None,
+        load_policy_rules: bool = True,
+    ) -> None:
         self.vocab_dim = vocab_dim
         self.num_classes = num_classes
         self.w_embed = _deterministic_weights("fin_embed", (256, vocab_dim))
@@ -62,24 +70,143 @@ class NeuralTransactionClassifier:
         self.w_cat_head = _deterministic_weights("fin_cat", (vocab_dim, num_classes))
         self.w_recur_head = _deterministic_weights("fin_recur", (vocab_dim, 2))  # [one_off, recurring]
 
-        # Common Indian merchant signatures
-        self.merchant_lexicon = {
+        # Dynamic extensible merchant lexicon: keyword -> (canonical_name, category_id, is_recurring)
+        self.merchant_lexicon: dict[str, tuple[str, str, bool]] = {}
+        self._load_baseline_lexicon()
+        if load_policy_rules:
+            self._load_from_finance_policy()
+        if initial_lexicon:
+            self.merchant_lexicon.update(initial_lexicon)
+        self._load_from_env_file()
+
+    def _load_baseline_lexicon(self) -> None:
+        """Baseline dictionary of frequent Indian merchants across categories."""
+        baseline: dict[str, tuple[str, str, bool]] = {
             "swiggy": ("Swiggy", "food_dining", True),
             "zomato": ("Zomato", "food_dining", False),
+            "eatfit": ("EatFit", "food_dining", False),
+            "starbucks": ("Starbucks", "food_dining", False),
             "uber": ("Uber India", "transport_mobility", False),
             "ola": ("Ola Cabs", "transport_mobility", False),
             "rapido": ("Rapido", "transport_mobility", False),
+            "irctc": ("IRCTC", "transport_mobility", False),
             "zepto": ("Zepto", "groceries", False),
             "blinkit": ("Blinkit", "groceries", False),
+            "instamart": ("Swiggy Instamart", "groceries", False),
+            "bigbasket": ("BigBasket", "groceries", False),
             "amazon": ("Amazon India", "shopping_ecommerce", False),
             "flipkart": ("Flipkart", "shopping_ecommerce", False),
+            "myntra": ("Myntra", "shopping_ecommerce", False),
+            "nykaa": ("Nykaa", "shopping_ecommerce", False),
             "netflix": ("Netflix", "entertainment", True),
             "spotify": ("Spotify", "entertainment", True),
+            "hotstar": ("Disney+ Hotstar", "entertainment", True),
+            "prime": ("Amazon Prime", "entertainment", True),
             "bescom": ("BESCOM Electricity", "utilities_bills", True),
             "tata power": ("Tata Power", "utilities_bills", True),
+            "tsspdcl": ("TSSPDCL Electricity", "utilities_bills", True),
+            "airtel": ("Airtel", "utilities_bills", True),
+            "jio": ("Reliance Jio", "utilities_bills", True),
             "zerodha": ("Zerodha Broking", "investments_wealth", False),
             "groww": ("Groww Invest", "investments_wealth", False),
+            "kuvera": ("Kuvera", "investments_wealth", False),
             "apollo": ("Apollo Pharmacy", "health_medical", False),
+            "pharmeasy": ("PharmEasy", "health_medical", False),
+            "1mg": ("Tata 1mg", "health_medical", False),
+        }
+        self.merchant_lexicon.update(baseline)
+
+    def _load_from_finance_policy(self) -> None:
+        """Dynamically load and merge merchant rules from central versioned policy."""
+        try:
+            from nexora.finance.policy import load_policy
+            pol = load_policy()
+            alerts_cfg = pol.section("alerts")
+            category_mapping = {
+                "Food & Dining": "food_dining",
+                "Mobility & Fuel": "transport_mobility",
+                "Subscriptions": "entertainment",
+                "Investments": "investments_wealth",
+                "Insurance": "investments_wealth",
+                "Loan EMI": "utilities_bills",
+                "Healthcare": "health_medical",
+                "Shopping": "shopping_ecommerce",
+                "Bills & Utilities": "utilities_bills",
+            }
+            for rule in alerts_cfg.get("merchant_rules", []):
+                cat_str = category_mapping.get(rule.get("category", ""), "food_dining")
+                is_rec = bool(rule.get("recurring", False))
+                for kw in rule.get("keywords", []):
+                    clean_kw = kw.strip().lower()
+                    if clean_kw and clean_kw not in self.merchant_lexicon:
+                        self.merchant_lexicon[clean_kw] = (kw.title(), cat_str, is_rec)
+        except Exception:
+            pass
+
+    def _load_from_env_file(self) -> None:
+        """Load external override lexicon file if configured via environment."""
+        path = os.getenv("NEXORA_MERCHANT_LEXICON_PATH")
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.register_merchants_batch(data)
+            except Exception:
+                pass
+
+    def register_merchant(
+        self,
+        keyword: str,
+        canonical_name: str,
+        category: str,
+        is_recurring: bool = False,
+    ) -> None:
+        """Dynamically register or update a single merchant signature at runtime."""
+        kw = keyword.strip().lower()
+        cat = category.strip().lower().replace(" ", "_").replace("&", "_")
+        if cat not in CATEGORIES:
+            cat = "shopping_ecommerce"
+        self.merchant_lexicon[kw] = (canonical_name.strip(), cat, is_recurring)
+
+    def register_merchants_batch(self, merchants: list[dict[str, Any]] | dict[str, Any]) -> int:
+        """Dynamically register a batch of merchants at runtime."""
+        count = 0
+        if isinstance(merchants, dict):
+            for kw, val in merchants.items():
+                if isinstance(val, (list, tuple)) and len(val) >= 2:
+                    mname = str(val[0])
+                    cat = str(val[1])
+                    rec = bool(val[2]) if len(val) > 2 else False
+                    self.register_merchant(kw, mname, cat, rec)
+                    count += 1
+                elif isinstance(val, dict):
+                    self.register_merchant(
+                        kw,
+                        val.get("name", kw.title()),
+                        val.get("category", "shopping_ecommerce"),
+                        bool(val.get("recurring", False)),
+                    )
+                    count += 1
+        elif isinstance(merchants, list):
+            for item in merchants:
+                kw = str(item.get("keyword") or item.get("kw") or "")
+                mname = str(item.get("name") or kw.title())
+                cat = str(item.get("category") or "shopping_ecommerce")
+                rec = bool(item.get("recurring", False))
+                if kw:
+                    self.register_merchant(kw, mname, cat, rec)
+                    count += 1
+        return count
+
+    def get_registered_merchants(self) -> dict[str, Any]:
+        """Return the current active dynamic merchant registry and statistics."""
+        return {
+            "total_merchants": len(self.merchant_lexicon),
+            "categories": CATEGORIES,
+            "merchants": {
+                k: {"name": v[0], "category": v[1], "recurring": v[2]}
+                for k, v in sorted(self.merchant_lexicon.items())
+            },
         }
 
     def _tokenize_to_indices(self, text: str, max_tokens: int = 16) -> np.ndarray:

@@ -842,6 +842,34 @@ def deep_finance_doc_extract(body: dict[str, Any]) -> dict[str, Any]:
     return hub.doc_intel.extract_document(text)
 
 
+@app.post("/v1/deep/finance/merchants/register")
+def deep_finance_merchants_register(body: dict[str, Any]) -> dict[str, Any]:
+    """Dynamically register or update merchant signatures at runtime without redeploying models."""
+    merchants = body.get("merchants")
+    if merchants is not None:
+        count = hub.txn_classifier.register_merchants_batch(merchants)
+    else:
+        kw = str(body.get("keyword") or body.get("kw") or "").strip().lower()
+        if not kw:
+            raise HTTPException(status_code=400, detail="keyword is required")
+        name = str(body.get("name") or kw.title())
+        cat = str(body.get("category") or "shopping_ecommerce")
+        rec = bool(body.get("recurring", False))
+        hub.txn_classifier.register_merchant(kw, name, cat, rec)
+        count = 1
+    return {
+        "status": "success",
+        "registered_count": count,
+        "total_active_merchants": len(hub.txn_classifier.merchant_lexicon),
+    }
+
+
+@app.get("/v1/deep/finance/merchants")
+def deep_finance_merchants_list() -> dict[str, Any]:
+    """List currently registered dynamic merchant signatures and category mappings."""
+    return hub.txn_classifier.get_registered_merchants()
+
+
 # --- Voice Deep Learning ---
 
 
@@ -891,6 +919,31 @@ def deep_voice_urgency(body: dict[str, Any]) -> dict[str, Any]:
         speech_rate_wpm=float(body.get("speech_rate_wpm", 165.0)),
         sentiment_polarity=float(body.get("sentiment_polarity", -0.3)),
     )
+
+
+@app.post("/v1/deep/voice/code-switch/register")
+def deep_voice_code_switch_register(body: dict[str, Any]) -> dict[str, Any]:
+    """Dynamically register dialect tokens and language pairs for telephony ASR."""
+    tokens = body.get("tokens")
+    lang = body.get("language")
+    if isinstance(tokens, dict):
+        count = hub.whisper_telephony.register_code_switch_tokens(tokens, language=lang)
+    elif isinstance(body.get("token"), str) and lang:
+        count = hub.whisper_telephony.register_code_switch_tokens({body["token"]: lang})
+    else:
+        raise HTTPException(status_code=400, detail="tokens dictionary or token + language required")
+    return {
+        "status": "success",
+        "registered_count": count,
+        "total_active_tokens": len(hub.whisper_telephony.code_switch_lexicon),
+        "supported_languages": hub.whisper_telephony.supported_languages,
+    }
+
+
+@app.get("/v1/deep/voice/code-switch/lexicon")
+def deep_voice_code_switch_lexicon() -> dict[str, Any]:
+    """List current dynamic code-switching vocabulary and supported Indian dialect pairs."""
+    return hub.whisper_telephony.get_lexicon()
 
 
 # --- Cross-Cutting & Continuous Learning ---
