@@ -1115,7 +1115,7 @@ export function NavMapCanvas({
               <View style={{ flex: 1 }}>
                 <Text style={styles.gpsHubTitle}>GPS & OpenStreetMap Pitstops</Text>
                 <Text style={styles.gpsHubCoords}>
-                  {gpsText} · {poiQuery.isFetching ? 'Scanning Overpass…' : `${realPois.length} live OSM POIs`}
+                  {gpsText} · {poiQuery.isFetching ? 'Scanning nearby places…' : `${realPois.length} nearby places`}
                 </Text>
               </View>
               <TouchableOpacity onPress={() => setGpsHubOpen(false)} style={styles.gpsHubCloseBtn}>
@@ -1273,7 +1273,7 @@ export function NavMapCanvas({
               </Text>
               <Text style={styles.gpsHintSub} numberOfLines={1}>
                 {fullScreenMode
-                  ? `OSM POIs (${realPois.length}) · Trace ${tracePoints.length} pts · Pitstops ▴`
+                  ? `Nearby (${realPois.length}) · Trace ${tracePoints.length} pts · Pitstops ▴`
                   : `Tap for OpenStreetMap Fuel/EV (${realPois.length}) · External Maps ▴`}
               </Text>
             </View>

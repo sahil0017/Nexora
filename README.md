@@ -1,89 +1,172 @@
-# NEXORA — Intelligent Life & Urban Mobility Platform
+# NEXORA
 
-**Status:** **Mobility Module Complete (M3+ Digital Twin Milestone)** 
+Intelligent life platform unifying **Mobility (MoveSmart)**, **Wealth & Finance**, **Copilot**, **Health**, and **Work** on an event-driven architecture.
 
-NEXORA is a multi-module personal intelligence super-app built as a Go modular monolith + independent Python ML service + React Native/Expo mobile & web client. Its flagship **Move (MoveSmart)** engine delivers end-to-end multimodal navigation, real-time hazard & event-aware intelligence, open-source Overpass POI telemetry, pre/during/post-trip automation, and a **12-Pillar City Movement Digital Twin**.
+## Architecture Overview
 
----
+NEXORA separates **transactional state and control plane** (Go + PostgreSQL/PostGIS + Redis) from **online learning and inference** (Python + FastAPI), connected asynchronously through a **Transactional Outbox → AWS SNS/SQS (or local relay) → Online Intelligence Consumer** pipeline, with **Server-Sent Events (SSE)** for real-time client updates.
 
-## Core Modules & Capabilities
+```mermaid
+flowchart LR
+    Mobile["Mobile / Web Client<br/>(Expo React Native)"]
+    API["Go Control-Plane API<br/>(platform/api · Chi)"]
+    PG[("PostgreSQL + PostGIS<br/>Domain Tables + platform.event_outbox")]
+    Redis[("Redis<br/>Spatial Geo + Twin Cache")]
+    DDB[("AWS DynamoDB<br/>Documents / Notes")]
+    Relay["OutboxRelay<br/>(<5ms channel wakeup + 5s poll)"]
+    SNS["AWS SNS Topic<br/>(Event Fan-out)"]
+    SQS["AWS SQS Queue<br/>(20s Long-Poll)"]
+    ML["Python ML Service<br/>(intelligence/ml-platform · FastAPI)"]
+    State["OnlineIntelligenceState<br/>(Idempotent Event Store + H3 Buffers)"]
 
-| Module | Status | Key Capabilities |
+    Mobile -- "REST / HTTPS" --> API
+    API -- "SSE (/api/v1/finance/stream)" --> Mobile
+    API -- "Atomic Tx + EnqueueOutbox()" --> PG
+    API -- "Geo Radar / Cache" --> Redis
+    API -- "Documents" --> DDB
+    PG -- "SELECT unpublished (batch 25)" --> Relay
+    Relay -- "Publish Envelope" --> SNS
+    SNS --> SQS
+    SQS -- "sqs_worker.py" --> ML
+    Relay -- "POST /v1/events/ingest (inline)" --> ML
+    ML --> State
+```
+
+## Event-Driven Flow
+
+1. **Atomic Write + Outbox Enqueue (`platform/api`)**
+   - Every domain mutation (`mobility/repository.go`, `finance/repository.go`) writes its business row and calls `events.EnqueueOutbox(...)` inside the **same PostgreSQL transaction**, guaranteeing zero lost events on crash.
+   - `EnqueueOutbox` inserts into `platform.event_outbox` and calls `NotifyOutbox()` (non-blocking buffered channel) to wake `OutboxRelay` immediately (`<5 ms`), backed by a 5-second fallback ticker.
+
+2. **Relay & Envelope Wrapping (`platform/api/internal/platform/events/outbox.go`)**
+   - `OutboxRelay.FlushBatch` reads up to 25 unpublished rows (`published_at IS NULL AND attempts < 10`), wraps each in the standard `contracts/events/envelope.schema.json` format (`event_id`, `event_type`, `schema_version`, `occurred_at`, `ingested_at`, `producer`, `payload`), and delivers it to:
+     - **AWS SNS** (`SNS_EVENTS_TOPIC_ARN`, SigV4-signed HTTPS `Publish` with `event_type` attribute) → **AWS SQS** (`SQS_INTELLIGENCE_QUEUE_URL`).
+     - **ML HTTP Ingestion** (`POST /v1/events/ingest`) when `ML_SERVICE_URL` is configured for sub-second local/direct propagation.
+   - Failed deliveries increment `attempts` and record `last_error` for retry; successful deliveries stamp `published_at`.
+
+3. **Idempotent Online Intelligence (`intelligence/ml-platform/src/nexora/events/sqs_worker.py`)**
+   - `run_sqs_consumer_loop` long-polls SQS (`WaitTimeSeconds=20`, `MaxNumberOfMessages=10`) while `/v1/events/ingest` accepts direct HTTP relays.
+   - `OnlineIntelligenceState.handle_event` deduplicates via `event_id`, unwraps SNS envelopes if present, routes by `event_type`, checkpoints state to disk, and updates live models in memory:
+     - `traffic.observed.v1` → updates `SpatioTemporalTrafficForecaster` segment speeds
+     - `location.observed.v1` / `location.batch` → cleans trajectories, indexes H3 cells, updates `MobilityDemandForecaster` & hotspot discovery
+     - `trip.started.v1` / `trip.completed.v1` / `route.feedback.v1` → updates demand & route quality feedback
+     - `hazard.reported.v1` → updates active road hazard ring buffer
+     - `finance.transaction.ingested.v1` → feeds cross-domain finance event stream
+
+4. **Cache Invalidation & Real-Time UI Push (`Redis` + `SSE`)**
+   - Finance mutations call `invalidateAndBroadcast(ctx, userID, event)`, which deletes the cached snapshot (`fin:twin:v1:<userID>`) in Redis and pushes an event onto per-user subscriber channels streamed over `GET /api/v1/finance/stream` (SSE).
+   - Mobility trip breadcrumbs update Redis spatial geo sets for low-latency nearby active-trip radar queries.
+
+```mermaid
+sequenceDiagram
+    participant App as Mobile App
+    participant API as Go API (nexora-api)
+    participant DB as PostgreSQL (Outbox)
+    participant Bus as AWS SNS / SQS
+    participant ML as Python ML (nexora-ml)
+
+    App->>API: POST /api/v1/mobility/trips/start (or /finance/transactions)
+    activate API
+    API->>DB: BEGIN TX -> Domain INSERT + INSERT platform.event_outbox -> COMMIT
+    API-->>API: NotifyOutbox() + invalidateAndBroadcast()
+    API-->>App: 201 Created (+ SSE push for Finance subscribers)
+    deactivate API
+
+    API->>DB: FlushBatch() reads unpublished outbox rows
+    API->>Bus: Publish event envelope (SNS -> SQS)
+    API->>ML: POST /v1/events/ingest (optional inline relay)
+    Bus->>ML: SQS 20s long-poll receives envelope
+    ML->>ML: Deduplicate event_id -> update traffic/demand/H3/finance state
+    API->>DB: UPDATE platform.event_outbox SET published_at = now()
+```
+
+### Event Contracts (`contracts/events/`)
+
+| Event | Producer | Consumer Effect |
 |---|---|---|
-| **Move (MoveSmart)** | **Complete** | Multimodal journey planning (`Car`, `2-Wheeler`, `Metro`, `2W + Metro`, `Bus`), dynamic departure optimization, Rapido-style fullscreen navigation dock, live Overpass fuel/EV/speed-cam POIs, meaningful hysteresis-filtered reroutes, post-trip time-saved insights, 5 Core ML Pillars, 12 City Digital Twin & Privacy Pillars |
-| **Assistant (Copilot)** | Active | Multilingual NLU + RAG (`English`, `తెలుగు`, `हिन्दी`), GPS-aware proactive corridor briefings, explainable route reasoning (`✨ Why?`) |
-| **Platform Core** | Active | Identity, JWT/dev auth, DynamoDB/Postgres persistence, Redis cache, AWS SNS/SQS event pipeline |
-| **Health / Finance / Work** | Foundation | Schema & module hub scaffolding ready for M4–M6 |
+| `trip.started.v1` | Mobility Repository | Seeds H3 demand ping at trip origin |
+| `location.observed.v1` | Mobility Repository | Trajectory cleaning, H3 hotspot & demand updates |
+| `trip.completed.v1` | Mobility Repository | Trip telemetry completion & duration metrics |
+| `route.feedback.v1` | Mobility Repository | Route recommendation feedback loop |
+| `hazard.reported.v1` | Mobility Repository | Updates active corridor hazard buffer |
+| `traffic.observed.v1` | Mobility Telemetry | Updates spatio-temporal segment speed state |
+| `transit.updated.v1` | Transit Feed | Updates stop arrival / freshness signals |
+| `prediction.generated.v1` | Intelligence Service | Records generated forecast metadata |
+| `finance.transaction.ingested.v1` | Finance Repository | Streams new financial activity to ML & SSE |
+| `work.task.created.v1` | Work Module | Task lifecycle envelope |
 
 ---
 
-## Technology Stack
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| **Mobile & Web** | React Native `0.88.1` + Expo (`~58`) + TypeScript + TanStack Query + React Native Web |
-| **Backend API** | Go (`Chi` router, `pgxpool`, structured `slog`, Redis read-through cache, DynamoDB docstore) |
-| **ML & Digital Twin** | Python + FastAPI + Uvicorn (ST-GNN congestion, H3 HDBSCAN hotspots, TFT demand, Road Memory Bayesian quorum, Laplace DP k-anonymity, Urban What-If Simulator) |
-| **Database** | PostgreSQL 16 + PostGIS (`0001`–`0005` migrations) + AWS DynamoDB |
-| **Open Data APIs** | OpenStreetMap Overpass API (Fuel stations, EV chargers, Speed cameras) & Nominatim Geocoding |
-| **Cloud Infra** | AWS CloudFormation (EC2, RDS PostgreSQL, ECR, S3, SNS, SQS, DynamoDB, SSM, Caddy Auto-HTTPS via `sslip.io`) |
+| Mobile / Web | React Native (Expo) + TypeScript + React Query + Zustand |
+| Control-Plane API | Go + Chi modular monolith (`platform/api`) |
+| Intelligence & ML | Python + FastAPI + PyTorch (`intelligence/ml-platform`) |
+| Primary DB | PostgreSQL 16 + PostGIS (per-module schemas + transactional outbox) |
+| Cache & Geo | Redis 7.4 |
+| Event Bus | PostgreSQL Outbox → AWS SNS / SQS (or Redpanda/Kafka locally) |
+| Document Store | AWS DynamoDB (serverless HTTPS) |
+| Object Storage | MinIO (local) / S3-compatible |
+| Observability | Prometheus + Grafana |
 
----
+## Repository Layout
 
-## Repository Structure
-
-```text
-apps/mobile/                Expo React Native + Web app (Home, Explore, AI Copilot, Activity Radar, Move HUD)
-platform/api/               Go control-plane API, mobility engine, ranking, POIs, digital twin handlers, SQL migrations
-intelligence/ml-platform/   Python FastAPI ML service (traffic, ETA, hotspots, vision, assistant, digital twin, privacy)
-contracts/                  OpenAPI (`nexora-v1.yaml`) & JSON event schemas (`contracts/events/`)
-infra/aws/                  CloudFormation (`template.yaml`), production Compose (`docker-compose.prod.yml`), Caddy & deploy script
-scripts/                    One-command AWS deploy & ops CLI (`deploy-aws.sh`)
-docs/                       Architecture, ADRs, AWS runbook, and full NEXORA Wiki (`docs/wiki/`)
+```
+apps/mobile/                Expo React Native app (Home, Explore, Copilot, Profile + Mobility & Wealth workspaces)
+platform/api/               Go modular monolith API (platform, identity, outbox, cache, mobility, finance)
+intelligence/ml-platform/   FastAPI ML inference service, SQS event consumer, geospatial & finance engines
+contracts/                  OpenAPI v1 spec (contracts/openapi/) + JSON event schemas (contracts/events/)
+infra/                      AWS SAM/Docker deploy templates, Postgres, Prometheus, Grafana configs
+scripts/                    Deployment & ops helper scripts (deploy-aws.sh)
+docs/                       Architecture blueprint, ADRs, runbooks
 ```
 
 ---
 
-## Documentation & Wiki Index
+## Quick Start
 
-Comprehensive documentation lives in [`docs/wiki/`](docs/wiki/Home.md) (and mirrors to the GitHub Wiki):
-
-1. [**Wiki Home & Mobility Feature Matrix**](docs/wiki/Home.md)
-2. [**Mobility Architecture, 5 ML Core & 12 Digital Twin Pillars**](docs/wiki/Mobility-Architecture-and-12-Pillars.md)
-3. [**API & PostGIS Database Reference**](docs/wiki/API-and-Database-Reference.md)
-4. [**Mobile UX, Rapido Fullscreen Navigation & Visual Components**](docs/wiki/Mobile-UX-and-Navigation.md)
-5. [**AWS Production Deployment & Local LAN Runbook**](docs/wiki/Deployment-and-LAN-Runbook.md)
-
----
-
-## Quick Verification Suite
+### 1. Local Full Stack (Docker Compose)
 
 ```bash
-# 1. Python ML Platform tests (8 unit tests)
-PYTHONPATH=intelligence/ml-platform/src python3 -m unittest discover -s intelligence/ml-platform/tests -v
+cp .env.example .env
+make up           # starts postgres, redis, redpanda, minio, api (:8080), ml (:8000), prometheus (:9090), grafana (:3000)
+make ps
 
-# 2. Go Mobility & Digital Twin tests (8 integration/unit suites)
-go test -C platform/api -v -count=1 ./internal/modules/mobility/...
-
-# 3. Mobile TypeScript check & production Web bundle
-npm --prefix apps/mobile run typecheck
-EXPO_NO_TELEMETRY=1 npm --prefix apps/mobile run export:web
+# Health checks
+curl http://localhost:8080/api/v1/healthz
+curl http://localhost:8000/healthz
 ```
 
----
+### 2. Run Mobile / Web Client
 
-## Quick Start (AWS + LAN)
-
-### Deploy Full Stack to AWS
 ```bash
-cp infra/aws/env.aws.example .env.aws   # set DB_PASSWORD
-./scripts/deploy-aws.sh deploy          # CloudFormation + ECR build/push + RDS migrate + Caddy HTTPS
-./scripts/deploy-aws.sh status          # verify outputs & /api/v1/healthz
+cd apps/mobile
+npm install
+npm run web       # or npm run ios / npm run android
 ```
 
-### Run Mobile / Web Client on Local LAN
+### 3. Tests & Formatting
+
 ```bash
-EXPO_NO_TELEMETRY=1 npm --prefix apps/mobile start -- --host lan --port 8081
-# Expo Go: exp://<YOUR_LAN_IP>:8081
-# Web:     http://<YOUR_LAN_IP>:8081
+make api-test     # cd platform/api && go test ./...
+make ml-test      # cd intelligence/ml-platform && python -m pytest
+make fmt          # cd platform/api && go fmt ./...
 ```
+
+### 4. AWS Free-Tier Deployment
+
+Requires `.env.aws` (see `infra/aws/env.aws.example`):
+
+```bash
+make aws-deploy   # provisions/updates stack & deploys api + ml
+make aws-status
+make aws-logs
+```
+
+## Conventions
+
+- **Contracts first:** `contracts/openapi/nexora-v1.yaml` and `contracts/events/` are the sources of truth.
+- **Boundary separation:** Go owns business logic, persistence, and outbox transactions; Python owns inference and online learning.
+- **Privacy by design:** Never log raw GPS coordinates, bank account numbers, PAN, Aadhaar, or unmasked UPI IDs.

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Screen } from '../../../shared/components/Screen';
 import { Card, SectionHeading, SegmentedControl } from '../../../core/design-system/components';
 import { Chip, FadeIn, Skeleton, StatusPill } from '../../../core/design-system/motion';
-import { colors, spacing } from '../../../app/theme/tokens';
+import { colors, fontFamily, spacing } from '../../../app/theme/tokens';
 import { MODE_OPTIONS, MobilityProfile, OptimizeFor, modeLabel, moveDataApi } from '../../../core/api/move';
 import { useMe } from '../../../core/auth/useMe';
 import { MapStyleMode, MultiObjectiveWeights, SoundAlertMode, useNavPreferences } from '../../../core/state/useNavPreferences';
@@ -374,8 +374,8 @@ export default function MobilityPrefsScreen() {
 }
 
 const styles = StyleSheet.create({
-  sub: { color: colors.textSecondary, fontSize: 12.5 },
-  rowLabel: { color: colors.textPrimary, fontWeight: '600' },
+  sub: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12 },
+  rowLabel: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontWeight: '600', fontSize: 13 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s },
   between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
   weightsBox: {
@@ -395,8 +395,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSubtle,
   },
-  profileStatVal: { color: colors.routeCyan, fontSize: 18, fontWeight: '900' },
-  profileStatLbl: { color: colors.textMuted, fontSize: 11, fontWeight: '700', marginTop: 2 },
+  profileStatVal: { color: colors.routeCyan, fontFamily: fontFamily.sans, fontSize: 16, fontWeight: '700' },
+  profileStatLbl: { color: colors.textMuted, fontFamily: fontFamily.medium, fontSize: 10.5, fontWeight: '600', marginTop: 2 },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',

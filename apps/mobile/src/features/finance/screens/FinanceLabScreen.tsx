@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
 import {
   TaxEvaluateResponse,
   WhatIfSimulationResponse,
@@ -87,9 +87,9 @@ export default function FinanceLabScreen() {
 
   return (
     <Screen
-      title="Tax & Decision Lab"
-      subtitle="Indian Income Tax · Monte Carlo · Macro Graph"
-      badge="QUANT LAB"
+      title="Tax & Planning"
+      subtitle="Income tax comparison, wealth forecast & market scenarios"
+      badge="PLANNING"
       rightAction={
         <FinanceHeaderActions
           privacyMasked={privacyMasked}
@@ -106,7 +106,7 @@ export default function FinanceLabScreen() {
       <View style={styles.stack}>
         <FadeIn index={0}>
           <SectionHeading
-            title="Deterministic Indian Tax Comparator"
+            title="Income Tax Regime Comparator"
             action={liveAnnualIncome > 0 ? 'Use Live Income' : undefined}
             onActionPress={
               liveAnnualIncome > 0 ? () => setGrossSalary(String(liveAnnualIncome)) : undefined
@@ -174,7 +174,7 @@ export default function FinanceLabScreen() {
 
         <FadeIn index={1}>
           <SectionHeading
-            title="Monte Carlo What-If Lab"
+            title="Wealth Projection Simulator"
             action={liveMonthlySip > 0 ? 'Use Active Goal SIP' : undefined}
             onActionPress={
               liveMonthlySip > 0 ? () => setMonthlySip(String(Math.round(liveMonthlySip))) : undefined
@@ -182,7 +182,7 @@ export default function FinanceLabScreen() {
           />
           <Card style={{ gap: spacing.m }}>
             <Text style={styles.subBody}>
-              Simulates 500 stochastic return paths seeded from your real net assets ({formatINR(Math.max(0, twin?.total_assets_inr ?? 0), privacyMasked)}).
+              Projects future wealth outcomes across 500 market scenarios starting from your current assets ({formatINR(Math.max(0, twin?.total_assets_inr ?? 0), privacyMasked)}).
             </Text>
 
             <View style={styles.pairRow}>
@@ -215,7 +215,7 @@ export default function FinanceLabScreen() {
             />
 
             <PrimaryButton
-              title="Run 500-Path Monte Carlo"
+              title="Project Future Wealth"
               variant="nav"
               onPress={() => void handleSimulateWhatIf()}
               loading={simLoading}

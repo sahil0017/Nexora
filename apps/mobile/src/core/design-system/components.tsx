@@ -9,7 +9,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { colors, radii, spacing, typography } from '../../app/theme/tokens';
+import { colors, fontFamily, radii, spacing, typography } from '../../app/theme/tokens';
 
 /** Surface card used across all modules. Supports 'featured', 'subtle', and 'nav' (glass HUD) styles. */
 export function Card({
@@ -170,15 +170,17 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
       <View style={styles.emptyBadge}>
         <Text style={{ color: colors.navBlue, fontSize: 16 }}>✦</Text>
       </View>
-      <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
+      <Text style={{ color: colors.textPrimary, fontFamily: fontFamily.medium, fontWeight: '600', fontSize: 13.5 }}>
         {title}
       </Text>
       {hint ? (
         <Text
           style={{
             color: colors.textSecondary,
+            fontFamily: fontFamily.sans,
             marginTop: spacing.xs,
-            fontSize: 12.5,
+            fontSize: 12,
+            lineHeight: 17,
             textAlign: 'center',
           }}>
           {hint}
@@ -212,7 +214,7 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: colors.accentPrimary,
     borderRadius: radii.button,
-    height: 48,
+    height: 44,
     paddingHorizontal: spacing.m,
     alignItems: 'center',
     justifyContent: 'center',
@@ -220,7 +222,7 @@ const styles = StyleSheet.create({
   buttonNav: {
     backgroundColor: colors.navBlue,
     borderRadius: 999,
-    height: 48,
+    height: 44,
     paddingHorizontal: spacing.l,
   },
   buttonSecondary: {
@@ -231,15 +233,17 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.45 },
   buttonText: {
     color: '#031109',
-    fontWeight: '800',
-    fontSize: 15,
-    letterSpacing: 0.2,
+    fontFamily: fontFamily.medium,
+    fontWeight: '700',
+    fontSize: 13.5,
+    letterSpacing: 0.1,
   },
   buttonTextNav: {
     color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 15,
-    letterSpacing: 0.3,
+    fontFamily: fontFamily.medium,
+    fontWeight: '700',
+    fontSize: 13.5,
+    letterSpacing: 0.15,
   },
   buttonTextSecondary: {
     color: colors.textPrimary,
@@ -257,7 +261,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 8,
     borderRadius: 999,
   },
@@ -266,8 +270,9 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     color: colors.textSecondary,
-    fontSize: 12.5,
-    fontWeight: '700',
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    fontWeight: '600',
   },
   segmentTextActive: {
     color: '#FFFFFF',
@@ -286,22 +291,24 @@ const styles = StyleSheet.create({
   },
   sectionAccent: {
     width: 3,
-    height: 14,
+    height: 13,
     borderRadius: 2,
     backgroundColor: colors.navBlue,
   },
   sectionAction: {
     color: colors.navBlue,
-    fontSize: 12.5,
-    fontWeight: '700',
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    fontWeight: '600',
   },
   input: {
     backgroundColor: colors.bgElevated,
     borderRadius: radii.button,
     paddingHorizontal: spacing.m,
-    height: 46,
+    height: 44,
     color: colors.textPrimary,
-    fontSize: 14.5,
+    fontFamily: fontFamily.sans,
+    fontSize: 13.5,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
   },

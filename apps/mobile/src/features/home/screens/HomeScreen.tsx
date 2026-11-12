@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Screen } from '../../../shared/components/Screen';
 import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-system/motion';
-import { colors, moduleColors, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, spacing, typography } from '../../../app/theme/tokens';
 import { digitalTwinApi, moveApi } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
 import { useMe } from '../../../core/auth/useMe';
@@ -37,9 +37,9 @@ function greeting(d = new Date()) {
 function contextLine(d = new Date()) {
   const h = d.getHours();
   const weekday = d.getDay() > 0 && d.getDay() < 6;
-  if (weekday && h >= 7 && h < 11) return 'Morning brief — live commute, wealth twin & AI copilot ready.';
-  if (weekday && h >= 16 && h < 21) return 'Evening pulse — live traffic, tax/SIP insights & daily wrap.';
-  return 'Dual-brain daily companion for mobility, finance & smart tasks.';
+  if (weekday && h >= 7 && h < 11) return 'Morning brief — live commute, wealth overview & copilot ready.';
+  if (weekday && h >= 16 && h < 21) return 'Evening pulse — live traffic, tax & savings insights ready.';
+  return 'Your daily companion for commute, wealth & smart tasks.';
 }
 
 // HM-01 NEXORA Super-App Home — multi-module launcher with dedicated Mobility workspace entry.
@@ -140,7 +140,7 @@ export default function HomeScreen() {
               <StatusPill label="PRIVACY FIRST" tone="warning" />
             </View>
             <Text style={styles.mobilitySub}>
-              Choose individually whether Location (GPS), Bank/UPI Alerts, Vault Email, Clipboard, or AI CFO context are allowed.
+              Choose individually whether Location (GPS), Bank/UPI Alerts, Statement Email, Clipboard, or Advisor context are allowed.
             </Text>
             <PrimaryButton
               title="Set Data & Access Permissions →"
@@ -203,7 +203,7 @@ export default function HomeScreen() {
 
           <View style={styles.mobShortcutRow}>
             <Chip label="➤ Plan Route" active onPress={() => openMobility('Navigate')} />
-            <Chip label="🌐 Digital Twin" onPress={() => openMobility('Radar')} />
+            <Chip label="🌐 Live Radar" onPress={() => openMobility('Radar')} />
             <Chip label="★ Saved Places" onPress={() => openMobility('Places')} />
             <Chip label="⚙ Route Prefs" onPress={() => openMobility('MovePrefs')} />
           </View>
@@ -212,25 +212,25 @@ export default function HomeScreen() {
         </Card>
       </FadeIn>
 
-      {/* Flagship Finance Intelligence Entry Card */}
-      <SectionHeading title="Wealth & Tax Twin" action="Launch Finance →" onActionPress={() => openFinance('FinTwin')} />
+      {/* Flagship Wealth & Finance Entry Card */}
+      <SectionHeading title="Wealth & Cashflow" action="Open Wealth →" onActionPress={() => openFinance('FinTwin')} />
       <FadeIn index={1}>
         <Card variant="featured" style={{ gap: spacing.s }}>
-          <Tappable onPress={() => openFinance('FinTwin')} accessibilityLabel="Launch Finance Intelligence">
+          <Tappable onPress={() => openFinance('FinTwin')} accessibilityLabel="Open Wealth Management">
             <View style={styles.between}>
               <View style={styles.modTitleRow}>
                 <View style={[styles.moduleIcon, { backgroundColor: 'rgba(163, 230, 53, 0.18)' }]}>
-                  <Text style={{ color: moduleColors.finance, fontSize: 16, fontWeight: '900' }}>₹</Text>
+                  <Text style={{ color: moduleColors.finance, fontSize: 15, fontWeight: '700' }}>₹</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.mobilityHeading}>Finance Intelligence</Text>
+                  <Text style={styles.mobilityHeading}>Wealth Management</Text>
                   <Text style={styles.mobilitySub} numberOfLines={2}>
-                    Zero-AA Edge Vault, Tax, Monte Carlo & AI CFO
+                    Net worth, accounts, tax savings & smart projections
                   </Text>
                 </View>
               </View>
               <StatusPill
-                label={finTwin.data ? `HEALTH ${finTwin.data.health_score}/100` : 'E2EE LIVE'}
+                label={finTwin.data ? `SCORE ${finTwin.data.health_score}/100` : 'SYNCED'}
                 tone={
                   finTwin.data
                     ? finTwin.data.health_score >= 75
@@ -273,19 +273,19 @@ export default function HomeScreen() {
             ]}>
             <Text style={[styles.preTravelText, { color: moduleColors.finance }]}>
               {finRadar.data && finRadar.data.total_annualized_savings_inr > 0
-                ? `⚡ Radar: ${formatINR(finRadar.data.total_annualized_savings_inr)}/yr tax & cash savings ready`
-                : '🔒 Edge-Masked Zero-AA · Auto-Discover accounts, EMIs & SIPs with E2EE'}
+                ? `⚡ Savings Radar: ${formatINR(finRadar.data.total_annualized_savings_inr)}/yr tax & cash opportunities`
+                : '🔒 Private Sync · Import bank & UPI alerts without sharing logins'}
             </Text>
           </View>
 
           <View style={styles.mobShortcutRow}>
-            <Chip label="📊 Twin" active color={moduleColors.finance} onPress={() => openFinance('FinTwin')} />
-            <Chip label="📥 Ledger" onPress={() => openFinance('FinLedger')} />
-            <Chip label="🧮 Tax & Lab" onPress={() => openFinance('FinLab')} />
-            <Chip label="🤖 AI CFO" onPress={() => openFinance('FinCFO')} />
+            <Chip label="📊 Overview" active color={moduleColors.finance} onPress={() => openFinance('FinTwin')} />
+            <Chip label="📥 Accounts" onPress={() => openFinance('FinLedger')} />
+            <Chip label="🧮 Tax & Plan" onPress={() => openFinance('FinLab')} />
+            <Chip label="✦ Advisor" onPress={() => openFinance('FinCFO')} />
           </View>
 
-          <PrimaryButton title="Launch Finance Hub" onPress={() => openFinance('FinTwin')} />
+          <PrimaryButton title="Open Wealth Hub" onPress={() => openFinance('FinTwin')} />
         </Card>
       </FadeIn>
 
@@ -302,8 +302,8 @@ export default function HomeScreen() {
                   <View style={[styles.dot, { backgroundColor: moduleColors[m.key] }]} />
                   <Text style={{ color: colors.navBlue, fontSize: 11, fontWeight: '700' }}>Open →</Text>
                 </View>
-                <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 15 }}>{m.title}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{m.desc}</Text>
+                <Text style={{ color: colors.textPrimary, fontFamily: fontFamily.medium, fontWeight: '600', fontSize: 14 }}>{m.title}</Text>
+                <Text style={{ color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 11.5 }}>{m.desc}</Text>
               </Card>
             </Tappable>
           </FadeIn>
@@ -380,8 +380,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mobilityHeading: { color: colors.textPrimary, fontSize: 16.5, fontWeight: '800' },
-  mobilitySub: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
+  mobilityHeading: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 15, fontWeight: '700' },
+  mobilitySub: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 11.5, marginTop: 1 },
   mobStatsRow: { flexDirection: 'row', gap: spacing.s },
   mobStat: {
     flex: 1,
@@ -390,8 +390,8 @@ const styles = StyleSheet.create({
     padding: 8,
     alignItems: 'center',
   },
-  mobStatVal: { color: colors.routeCyan, fontSize: 14, fontWeight: '800' },
-  mobStatLbl: { color: colors.textSecondary, fontSize: 10.5, marginTop: 2 },
+  mobStatVal: { color: colors.routeCyan, fontFamily: fontFamily.sans, fontSize: 13.5, fontWeight: '700' },
+  mobStatLbl: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 10.5, marginTop: 2 },
   preTravelPill: {
     backgroundColor: 'rgba(29, 143, 225, 0.12)',
     borderRadius: 10,
@@ -400,7 +400,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(29, 143, 225, 0.25)',
   },
-  preTravelText: { color: colors.routeCyan, fontSize: 11.5, fontWeight: '600', lineHeight: 16 },
+  preTravelText: { color: colors.routeCyan, fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '600', lineHeight: 16 },
   mobShortcutRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s, paddingVertical: 2 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s },
   moduleWrap: { flexGrow: 1, flexBasis: '47%' },
@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
     padding: 8,
     alignItems: 'center',
   },
-  telemetryVal: { color: colors.routeCyan, fontSize: 17, fontWeight: '800' },
-  telemetryLabel: { color: colors.textSecondary, fontSize: 10.5, marginTop: 2 },
+  telemetryVal: { color: colors.routeCyan, fontFamily: fontFamily.sans, fontSize: 15.5, fontWeight: '700' },
+  telemetryLabel: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 10.5, marginTop: 2 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s, marginTop: spacing.s },
 });

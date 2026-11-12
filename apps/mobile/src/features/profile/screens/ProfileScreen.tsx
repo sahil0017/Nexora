@@ -6,7 +6,7 @@ import { Screen } from '../../../shared/components/Screen';
 import { QuickSettingsSheet } from '../../../shared/components/QuickSettingsSheet';
 import { Card, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-system/motion';
-import { colors, moduleColors, spacing } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, spacing } from '../../../app/theme/tokens';
 import { modeLabel, platformApi } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
 import { getAuthToken, setAuthToken } from '../../../core/api/client';
@@ -43,19 +43,12 @@ export default function ProfileScreen() {
   const [password, setPassword] = useState('');
   const [token, setToken] = useState<string | null>(getAuthToken());
   const [showAuthForm, setShowAuthForm] = useState(false);
-  const [showStackDiag, setShowStackDiag] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const health = useQuery({
     queryKey: ['platform-health'],
     queryFn: platformApi.health,
     refetchInterval: 30_000,
-    retry: 0,
-  });
-
-  const ready = useQuery({
-    queryKey: ['platform-ready'],
-    queryFn: platformApi.ready,
     retry: 0,
   });
 
@@ -111,7 +104,7 @@ export default function ProfileScreen() {
                   {user.timezone} · {user.locale}
                 </Text>
               </View>
-              <StatusPill label={token ? 'JWT' : 'ACTIVE'} tone="success" />
+              <StatusPill label={token ? 'SIGNED IN' : 'ACTIVE'} tone="success" />
             </View>
           )}
 
@@ -192,16 +185,16 @@ export default function ProfileScreen() {
             style={styles.moduleRow}>
             <View style={{ flex: 1 }}>
               <View style={styles.rowInline}>
-                <Text style={styles.rowTitle}>Finance · AI Wealth & Tax Twin</Text>
+                <Text style={styles.rowTitle}>Wealth & Finance</Text>
                 <StatusPill label="LIVE" tone="success" />
               </View>
               <Text style={styles.sub}>
                 {finTwin.data
-                  ? `Net Worth ${formatINR(finTwin.data.net_worth_inr)} · Health ${finTwin.data.health_score}/100 · ${finAccounts.data?.count ?? 0} accts · ${finChannels.data?.channels?.length ?? 0} channels`
-                  : 'Zero-AA Smart Sync · Edge E2EE · Indian Tax & AI CFO'}
+                  ? `Net Worth ${formatINR(finTwin.data.net_worth_inr)} · Score ${finTwin.data.health_score}/100 · ${finAccounts.data?.count ?? 0} accts · ${finChannels.data?.channels?.length ?? 0} channels`
+                  : 'Private account sync · Tax planning & wealth advisor'}
               </Text>
             </View>
-            <Text style={[styles.chevron, { color: moduleColors.finance }]}>Launch ›</Text>
+            <Text style={[styles.chevron, { color: moduleColors.finance }]}>Open ›</Text>
           </Tappable>
 
           <View style={styles.divider} />
@@ -220,13 +213,12 @@ export default function ProfileScreen() {
         </Card>
       </FadeIn>
 
-      {/* 3. Preferences & Cloud Status */}
+      {/* 3. Preferences & Sync Status */}
       <SectionHeading
-        title="Privacy, App & Cloud"
-        action="Ping API"
+        title="Privacy & Preferences"
+        action="Refresh"
         onActionPress={() => {
           health.refetch();
-          ready.refetch();
           finTwin.refetch();
         }}
       />
@@ -236,7 +228,7 @@ export default function ProfileScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Privacy & Data Access Permissions</Text>
               <Text style={styles.sub}>
-                Control GPS, Bank/UPI Alerts, Vault Email, Clipboard & AI CFO ({activePermsCount}/{totalPermsCount} active)
+                Control GPS, Bank/UPI Alerts, Statement Email, Clipboard & Advisor ({activePermsCount}/{totalPermsCount} active)
               </Text>
             </View>
             <StatusPill
@@ -249,19 +241,19 @@ export default function ProfileScreen() {
 
           <Tappable onPress={() => nav.navigate('Finance', { screen: 'FinLedger' })} style={styles.between}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>Zero-AA Vault & E2EE Firewall</Text>
+              <Text style={styles.rowTitle}>Private Financial Protection</Text>
               <Text style={styles.sub}>
-                On-device PII masking + client E2EE envelope · Tax Kernel FY26-27 (Auto)
+                On-device sensitive detail masking · FY26–27 tax rules
               </Text>
             </View>
-            <StatusPill label={permissions.edgePiiMasking ? 'ARMED' : 'PAUSED'} tone={permissions.edgePiiMasking ? 'info' : 'warning'} />
+            <StatusPill label={permissions.edgePiiMasking ? 'ACTIVE' : 'PAUSED'} tone={permissions.edgePiiMasking ? 'info' : 'warning'} />
           </Tappable>
 
           <View style={styles.divider} />
 
           <Tappable onPress={() => setSettingsOpen(true)} style={styles.between}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>HUD & Map Display</Text>
+              <Text style={styles.rowTitle}>Navigation & Map Display</Text>
               <Text style={styles.sub}>
                 {navPrefs.viewMode} view · {navPrefs.mapStyle} map · {navPrefs.soundMode} alerts
               </Text>
@@ -274,27 +266,18 @@ export default function ProfileScreen() {
           {health.isLoading ? (
             <Skeleton height={16} />
           ) : health.data ? (
-            <>
-              <Tappable onPress={() => setShowStackDiag(v => !v)} style={styles.between}>
-                <View style={[styles.rowInline, { flex: 1 }]}>
-                  <StatusPill
-                    label={`API ${health.data.status.toUpperCase()} · READY: ${ready.data?.status?.toUpperCase() ?? '...'}`}
-                    tone={health.data.status === 'ok' ? 'success' : 'warning'}
-                  />
-                </View>
-                <Text style={styles.chevron}>{showStackDiag ? 'Hide ▲' : 'Details ▼'}</Text>
-              </Tappable>
-              {showStackDiag && (
-                <View style={styles.diagBox}>
-                  <Text style={styles.meta}>Service: {health.data.service} v{health.data.version}</Text>
-                  <Text style={styles.meta}>Postgres: {health.data.database}</Text>
-                  <Text style={styles.meta}>DocStore: {health.data.docstore}</Text>
-                  <Text style={styles.meta}>Redis: {health.data.redis}</Text>
-                </View>
-              )}
-            </>
+            <View style={styles.between}>
+              <Text style={styles.rowTitle}>Sync Status</Text>
+              <StatusPill
+                label={health.data.status === 'ok' ? 'CONNECTED' : 'LIMITED'}
+                tone={health.data.status === 'ok' ? 'success' : 'warning'}
+              />
+            </View>
           ) : (
-            <StatusPill label="CLOUD API UNREACHABLE" tone="danger" />
+            <View style={styles.between}>
+              <Text style={styles.rowTitle}>Sync Status</Text>
+              <StatusPill label="OFFLINE" tone="danger" />
+            </View>
           )}
         </Card>
       </FadeIn>
@@ -316,10 +299,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { color: colors.textPrimary, fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
-  name: { color: colors.textPrimary, fontWeight: '800', fontSize: 18 },
-  sub: { color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 },
-  meta: { color: colors.textMuted, fontSize: 11.5 },
+  avatarText: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 15, fontWeight: '700', letterSpacing: 0.4 },
+  name: { color: colors.textPrimary, fontFamily: fontFamily.sans, fontWeight: '700', fontSize: 16 },
+  sub: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12, lineHeight: 17 },
+  meta: { color: colors.textMuted, fontFamily: fontFamily.sans, fontSize: 11 },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -329,14 +312,14 @@ const styles = StyleSheet.create({
     paddingTop: spacing.s,
   },
   linkBtn: { paddingVertical: 2 },
-  linkBtnText: { color: colors.navBlue, fontSize: 12.5, fontWeight: '700' },
+  linkBtnText: { color: colors.navBlue, fontFamily: fontFamily.medium, fontSize: 12, fontWeight: '600' },
   authDrawer: { gap: spacing.s, paddingTop: spacing.xs },
   row: { flexDirection: 'row', gap: spacing.s },
   rowInline: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.s },
   between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
   moduleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
-  rowTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '700', flexShrink: 1 },
-  chevron: { color: colors.navBlue, fontSize: 12.5, fontWeight: '700' },
+  rowTitle: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 13.5, fontWeight: '600', flexShrink: 1 },
+  chevron: { color: colors.navBlue, fontFamily: fontFamily.medium, fontSize: 12, fontWeight: '600' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.borderSubtle },
   upcomingGrid: { flexDirection: 'row', gap: spacing.xs },
   upcomingPill: {
@@ -348,12 +331,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSubtle,
   },
-  upcomingTitle: { color: colors.textPrimary, fontSize: 12.5, fontWeight: '700' },
-  upcomingTag: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  diagBox: {
-    backgroundColor: colors.bgElevated,
-    borderRadius: 12,
-    padding: 10,
-    gap: 4,
-  },
+  upcomingTitle: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 12.5, fontWeight: '600' },
+  upcomingTag: { color: colors.textMuted, fontFamily: fontFamily.sans, fontSize: 10.5, marginTop: 2 },
 });

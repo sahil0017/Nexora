@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, moduleColors, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, spacing, typography } from '../../../app/theme/tokens';
 import { Card, SectionHeading } from '../../../core/design-system/components';
 import { FadeIn } from '../../../core/design-system/motion';
 import { Screen } from '../../../shared/components/Screen';
@@ -31,8 +31,8 @@ export default function FinanceWealthScreen() {
 
   return (
     <Screen
-      title="Wealth & Debt"
-      subtitle="Portfolio Holdings · Active Loans · Goals · Budgets"
+      title="Portfolio & Goals"
+      subtitle="Investments, active loans, goals & budgets"
       badge="PORTFOLIO"
       rightAction={
         <FinanceHeaderActions
@@ -43,7 +43,9 @@ export default function FinanceWealthScreen() {
       }>
       {errorMsg ? (
         <Card style={{ borderColor: colors.statusDanger }}>
-          <Text style={{ color: colors.statusDanger, fontSize: 12.5, fontWeight: '600' }}>{errorMsg}</Text>
+          <Text style={{ color: colors.statusDanger, fontFamily: fontFamily.medium, fontSize: 12.5, fontWeight: '600' }}>
+            {errorMsg}
+          </Text>
         </Card>
       ) : null}
 
@@ -74,22 +76,24 @@ export default function FinanceWealthScreen() {
 
         <FadeIn index={5}>
           <SectionHeading title={`Active Budgets (${budgets.length})`} />
-          <Card style={{ gap: spacing.s }}>
+          <Card style={{ gap: spacing.xs }}>
             {budgets.length > 0 ? (
-              budgets.map(b => (
-                <View key={b.id} style={styles.lineRow}>
-                  <View style={{ flex: 1 }}>
+              budgets.map((b, idx) => (
+                <View
+                  key={b.id}
+                  style={[styles.lineRow, idx === budgets.length - 1 && styles.lineRowLast]}>
+                  <View style={{ flex: 1, paddingRight: spacing.s }}>
                     <Text style={styles.rowTitle}>{b.name}</Text>
                     <Text style={styles.labelMuted}>{b.period.toUpperCase()} BUDGET</Text>
                   </View>
-                  <Text style={{ color: moduleColors.finance, fontWeight: '800', fontSize: 15 }}>
+                  <Text style={{ color: moduleColors.finance, fontFamily: fontFamily.sans, fontWeight: '700', fontSize: 14 }}>
                     {formatINR(b.amount, privacyMasked)}
                   </Text>
                 </View>
               ))
             ) : (
               <Text style={styles.subBody}>
-                No custom spending budgets set yet. You can add budgets from Ledger → + Manual Entry.
+                No spending budgets set yet. You can add budgets from Accounts → + Manual Entry.
               </Text>
             )}
           </Card>
@@ -103,14 +107,18 @@ const styles = StyleSheet.create({
   stack: { gap: spacing.m },
   pairRow: { flexDirection: 'row', gap: spacing.s },
   labelMuted: { ...typography.label, color: colors.textMuted },
-  subBody: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
-  rowTitle: { fontSize: 13.5, fontWeight: '700', color: colors.textPrimary },
+  subBody: { fontFamily: fontFamily.sans, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary },
+  rowTitle: { fontFamily: fontFamily.medium, fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   lineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderSubtle,
+  },
+  lineRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 2,
   },
 });

@@ -29,8 +29,8 @@ const HAZARD_TYPES = [
 
 const LENSES = [
   { key: 'all', label: 'Overview' },
-  { key: 'twin', label: 'Digital Twin' },
-  { key: 'traffic', label: 'Traffic & H3' },
+  { key: 'twin', label: 'City Pulse' },
+  { key: 'traffic', label: 'Traffic' },
   { key: 'transit', label: 'Transit' },
   { key: 'hazards', label: 'Hazards' },
 ] as const;
@@ -509,9 +509,7 @@ export default function ActivityScreen() {
                       <Stat label="Surge" value={`${zone.surge_pressure.toFixed(2)}x`} />
                       <Stat label="Transit avail." value={`${Math.round(zone.transport_availability * 100)}%`} />
                     </View>
-                    <Text style={styles.sub}>
-                      H3 Cell: {zone.h3_index} · Model: {zone.model_version}
-                    </Text>
+                    <Text style={styles.sub}>Area activity · Live forecast</Text>
                   </>
                 ) : (
                   <Text style={styles.sub}>Demand forecast awaits GPS coordinates.</Text>
@@ -519,7 +517,7 @@ export default function ActivityScreen() {
               </Card>
             </FadeIn>
 
-            <SectionHeading title="STGCN traffic & horizon forecast" />
+            <SectionHeading title="Traffic & horizon forecast" />
             <FadeIn index={4}>
               <Card style={{ gap: spacing.s }}>
                 <SegmentedControl compact options={[...HORIZONS]} value={horizonMin} onChange={setHorizonMin} />
@@ -542,7 +540,7 @@ export default function ActivityScreen() {
                         {p.segment_id} (+{horizonMin}m)
                       </Text>
                       <Text style={{ color: colors.routeCyan, fontWeight: '700' }}>
-                        {Math.round(p.speed_kph)} km/h ({p.model_version})
+                        {Math.round(p.speed_kph)} km/h
                       </Text>
                     </View>
                   ))
@@ -551,7 +549,7 @@ export default function ActivityScreen() {
                 )}
                 {hotspots.data?.hotspots?.length ? (
                   <Text style={[styles.sub, { marginTop: 4 }]}>
-                    Active H3 Hotspot: {hotspots.data.hotspots[0].h3_index} ·{' '}
+                    Busy Zone Nearby:{' '}
                     {hotspots.data.hotspots[0].severity ??
                       `${Math.round((hotspots.data.hotspots[0].congestion_score ?? 0) * 100)}% congestion`}
                     {hotspots.data.hotspots[0].avg_speed_kph != null
@@ -583,15 +581,15 @@ export default function ActivityScreen() {
                       <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
                         ⚠ {a.segment_id} · {a.severity.toUpperCase()}
                       </Text>
-                      <Text style={{ color: colors.statusWarning, fontSize: 12, fontWeight: '800' }}>
-                        -{Math.round(a.speed_drop_pct)}% speed (z={a.z_score.toFixed(1)})
+                      <Text style={{ color: colors.statusWarning, fontSize: 12, fontWeight: '700' }}>
+                        -{Math.round(a.speed_drop_pct)}% slower
                       </Text>
                     </View>
                     <Text style={styles.sub}>{a.cause_hint}</Text>
                   </View>
                 )) ?? (
                   <Text style={styles.sub}>
-                    EWMA residual monitor active · no abnormal slowdowns detected right now.
+                    Live traffic monitor active · no unusual slowdowns detected right now.
                   </Text>
                 )}
 

@@ -12,7 +12,7 @@ import {
   SectionHeading,
 } from '../../../core/design-system/components';
 import { Chip, FadeIn, Skeleton, Tappable } from '../../../core/design-system/motion';
-import { colors, spacing } from '../../../app/theme/tokens';
+import { colors, fontFamily, spacing } from '../../../app/theme/tokens';
 import { moveApi } from '../../../core/api/move';
 import { useMe } from '../../../core/auth/useMe';
 import { useLocation } from '../../../core/location/useLocation';
@@ -172,8 +172,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
   },
-  actionPillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  cardHeading: { color: colors.textPrimary, fontSize: 15.5, fontWeight: '800' },
+  actionPillText: { color: '#FFFFFF', fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '700' },
+  cardHeading: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 14, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s },
   placeCard: {
     flexDirection: 'row',

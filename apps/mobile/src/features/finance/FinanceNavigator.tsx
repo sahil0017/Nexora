@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View } from 'react-native';
-import { colors, moduleColors } from '../../app/theme/tokens';
+import { colors, fontFamily, moduleColors } from '../../app/theme/tokens';
 import { NavIcon, NavIconName } from '../../shared/components/NavIcons';
 import { FinanceProvider } from './FinanceContext';
 import FinanceOverviewScreen from './screens/FinanceOverviewScreen';
@@ -25,40 +25,40 @@ export default function FinanceNavigator() {
           headerShown: false,
           tabBarActiveTintColor: moduleColors.finance,
           tabBarInactiveTintColor: colors.textMuted,
-          tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+          tabBarLabelStyle: { fontFamily: fontFamily.medium, fontSize: 10.5, fontWeight: '600', marginTop: 2 },
           tabBarStyle: {
             backgroundColor: '#081018',
             borderTopColor: 'rgba(163, 230, 53, 0.22)',
             borderTopWidth: 1,
-            height: 64,
-            paddingBottom: 8,
-            paddingTop: 6,
+            height: 60,
+            paddingBottom: 7,
+            paddingTop: 5,
           },
         }}>
         <Tab.Screen
           name="FinTwin"
           component={FinanceOverviewScreen}
-          options={{ tabBarIcon: tabIcon('FinTwin'), title: 'Twin' }}
+          options={{ tabBarIcon: tabIcon('FinTwin'), title: 'Overview' }}
         />
         <Tab.Screen
           name="FinLedger"
           component={FinanceLedgerScreen}
-          options={{ tabBarIcon: tabIcon('FinLedger'), title: 'Ledger' }}
+          options={{ tabBarIcon: tabIcon('FinLedger'), title: 'Accounts' }}
         />
         <Tab.Screen
           name="FinWealth"
           component={FinanceWealthScreen}
-          options={{ tabBarIcon: tabIcon('FinWealth'), title: 'Wealth' }}
+          options={{ tabBarIcon: tabIcon('FinWealth'), title: 'Portfolio' }}
         />
         <Tab.Screen
           name="FinLab"
           component={FinanceLabScreen}
-          options={{ tabBarIcon: tabIcon('FinLab'), title: 'Tax & Lab' }}
+          options={{ tabBarIcon: tabIcon('FinLab'), title: 'Tax & Plan' }}
         />
         <Tab.Screen
           name="FinCFO"
           component={FinanceCFOScreen}
-          options={{ tabBarIcon: tabIcon('FinCFO'), title: 'AI CFO' }}
+          options={{ tabBarIcon: tabIcon('FinCFO'), title: 'Advisor' }}
         />
       </Tab.Navigator>
     </FinanceProvider>

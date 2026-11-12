@@ -11,7 +11,7 @@ import {
   SectionHeading,
 } from '../../../core/design-system/components';
 import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-system/motion';
-import { colors, moduleColors, spacing } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, spacing } from '../../../app/theme/tokens';
 import { platformApi } from '../../../core/api/move';
 import { useMe } from '../../../core/auth/useMe';
 
@@ -26,10 +26,10 @@ const MODULE_META: Record<
     prompts: ['Show my health summary', 'Analyze my latest lab metrics', 'Remind me of daily wellness goals'],
   },
   finance: {
-    title: 'Finance',
-    subtitle: 'Spending overview, commute cost & budgets',
+    title: 'Wealth & Finance',
+    subtitle: 'Net worth, cashflow, tax planning & portfolio insights',
     color: moduleColors.finance,
-    prompts: ['Show my spending overview', 'Summarize my monthly commute spend', 'Budget tips for this week'],
+    prompts: ['Audit my cash & tax savings', 'Summarize my monthly spending', 'Should I prepay my loan or increase SIP?'],
   },
   work: {
     title: 'Work',
@@ -37,9 +37,30 @@ const MODULE_META: Record<
     color: moduleColors.work,
     prompts: ['Summarize my work tasks', 'Prepare morning briefing', 'When should I leave for office?'],
   },
+  assistant: {
+    title: 'Copilot',
+    subtitle: 'Personal AI assistant across commute, wealth & daily tasks',
+    color: moduleColors.assistant,
+    prompts: ['When should I leave for work?', 'Audit my cash & tax savings', 'Prepare morning briefing'],
+  },
 };
 
-/** Multi-module workspace for Health, Finance, and Work modules inside NEXORA. */
+function resolveMeta(rawKey?: string) {
+  const key = String(rawKey ?? 'health').trim().toLowerCase();
+  if (MODULE_META[key]) return { key, meta: MODULE_META[key] };
+  const title = key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Module';
+  return {
+    key,
+    meta: {
+      title,
+      subtitle: `${title} records, notes & Copilot insights`,
+      color: colors.navBlue,
+      prompts: [`Show my ${key} summary`, `Help me organize ${key} tasks`],
+    },
+  };
+}
+
+/** Multi-module workspace for Health, Work, and general modules inside NEXORA. */
 export default function ModuleOverviewScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
@@ -47,8 +68,7 @@ export default function ModuleOverviewScreen() {
   const me = useMe();
   const userId = me.data?.id;
 
-  const moduleKey: string = route.params?.module ?? 'health';
-  const meta = MODULE_META[moduleKey] ?? MODULE_META.health;
+  const { key: moduleKey, meta } = resolveMeta(route.params?.module);
   const isEnabled = me.data?.modules?.includes(moduleKey) ?? true;
 
   const [title, setTitle] = useState('');
@@ -104,7 +124,7 @@ export default function ModuleOverviewScreen() {
             />
             <View style={[styles.dot, { backgroundColor: meta.color }]} />
           </View>
-          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+          <Text style={{ color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12.5, lineHeight: 18 }}>
             Ask NEXORA Copilot about your {meta.title.toLowerCase()} workflows or capture quick records below.
           </Text>
           <View style={styles.chips}>
@@ -156,14 +176,14 @@ export default function ModuleOverviewScreen() {
             hint="Tap + New Note above to store notes or launch Copilot for insights."
           />
         ) : (
-          moduleDocs.map(d => (
+            moduleDocs.map(d => (
             <View key={d.id} style={styles.docRow}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.textPrimary, fontWeight: '700' }}>{d.title}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12.5, marginTop: 2 }}>{d.content}</Text>
+                <Text style={{ color: colors.textPrimary, fontFamily: fontFamily.medium, fontWeight: '600', fontSize: 13.5 }}>{d.title}</Text>
+                <Text style={{ color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12, marginTop: 2 }}>{d.content}</Text>
               </View>
               <Tappable onPress={() => delDoc.mutate(d.id)}>
-                <Text style={{ color: colors.statusDanger, fontSize: 12, fontWeight: '700' }}>Delete</Text>
+                <Text style={{ color: colors.statusDanger, fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '600' }}>Delete</Text>
               </Tappable>
             </View>
           ))
@@ -176,11 +196,11 @@ export default function ModuleOverviewScreen() {
 const styles = StyleSheet.create({
   addBtn: {
     backgroundColor: colors.navBlue,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
     borderRadius: 999,
   },
-  addBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  addBtnText: { color: '#FFFFFF', fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '700' },
   between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   dot: { width: 10, height: 10, borderRadius: 5 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s },

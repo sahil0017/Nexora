@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { colors, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
 import { financeApi } from '../../../core/api/finance';
 import { Card, EmptyState, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { Chip, FadeIn, StatusPill } from '../../../core/design-system/motion';
@@ -91,7 +91,7 @@ export default function FinanceLedgerScreen() {
       );
       if (res) {
         setIngestBanner(
-          `Synced ${res.ingested_alerts} alerts (${res.e2ee_verified ? 'E2EE Verified' : 'Edge Masked'}).`,
+          `Synced ${res.ingested_alerts} alerts (${res.e2ee_verified ? 'Encrypted & Masked' : 'Masked'}).`,
         );
         setAlertText('');
       }
@@ -146,9 +146,9 @@ export default function FinanceLedgerScreen() {
 
   return (
     <Screen
-      title="Ledger & Alerts"
-      subtitle="Accounts · Zero-AA Edge Masking · Live Transactions"
-      badge="E2EE INGESTION"
+      title="Accounts & Cashflow"
+      subtitle="Connected accounts, transactions & alert import"
+      badge="ACCOUNTS"
       rightAction={
         <FinanceHeaderActions
           privacyMasked={privacyMasked}
@@ -187,7 +187,7 @@ export default function FinanceLedgerScreen() {
               ))}
             </View>
           ) : (
-            <EmptyState title="No accounts linked yet" hint="Use 1-Tap Smart Auto-Discover on Twin or ingest an alert below." />
+            <EmptyState title="No accounts linked yet" hint="Import a bank or UPI alert below or add an account manually." />
           )}
         </FadeIn>
 
@@ -232,10 +232,10 @@ export default function FinanceLedgerScreen() {
           </Card>
         </FadeIn>
 
-        {/* Zero-AA Edge-Masked Real-Time Ingestion */}
+        {/* Private Real-Time Alert Ingestion */}
         <FadeIn index={2}>
           <SectionHeading
-            title="Zero-AA Alert Ingestion"
+            title="Import Bank & UPI Alerts"
             action="Privacy & Access ›"
             onActionPress={() => nav.getParent()?.navigate('PrivacyPermissions')}
           />
@@ -283,15 +283,15 @@ export default function FinanceLedgerScreen() {
             {edgePreview ? (
               <View style={styles.resultBox}>
                 <View style={styles.rowBetween}>
-                  <Text style={styles.labelMuted}>ON-DEVICE MASK + E2EE PREVIEW</Text>
+                  <Text style={styles.labelMuted}>ON-DEVICE PRIVACY PREVIEW</Text>
                   <StatusPill
-                    label={`${edgePreview.redactedCount} PII scrubbed`}
+                    label={`${edgePreview.redactedCount} details masked`}
                     tone={edgePreview.redactedCount > 0 ? 'success' : 'info'}
                   />
                 </View>
                 <Text style={styles.subBody}>{edgePreview.scrubbedText}</Text>
                 <Text style={styles.labelMuted} numberOfLines={1}>
-                  Acct {edgePreview.maskedAccount} · {edgePreview.e2eeCiphertext}
+                  Acct {edgePreview.maskedAccount} · Protected on device
                 </Text>
               </View>
             ) : null}
@@ -310,11 +310,11 @@ export default function FinanceLedgerScreen() {
           </Card>
         </FadeIn>
 
-        {/* Vault Email Channels */}
+        {/* Statement Forwarding Channels */}
         <FadeIn index={3}>
           <SectionHeading
-            title={`Vault Channels (${channels.length})`}
-            action="+ Provision Alias"
+            title={`Statement Forwarding (${channels.length})`}
+            action="+ Add Alias"
             onActionPress={() => void handleCreateVaultEmail()}
           />
           <Card style={{ gap: spacing.s }}>
@@ -324,7 +324,7 @@ export default function FinanceLedgerScreen() {
                   <View style={{ flex: 1, paddingRight: spacing.s }}>
                     <Text style={styles.rowTitle} numberOfLines={1}>{ch.provider_name}</Text>
                     <Text style={styles.labelMuted} numberOfLines={1}>
-                      {ch.channel_type}
+                      {ch.channel_type.replace(/_/g, ' ')}
                       {ch.vault_alias ? ` · ${ch.vault_alias}` : ''}
                     </Text>
                   </View>
@@ -332,10 +332,10 @@ export default function FinanceLedgerScreen() {
                 </View>
               ))
             ) : (
-              <Text style={styles.subBody}>No Zero-AA channels provisioned yet.</Text>
+              <Text style={styles.subBody}>No forwarding aliases created yet.</Text>
             )}
             <PrimaryButton
-              title="Provision Encrypted Vault Email"
+              title="Create Private Forwarding Email"
               variant="secondary"
               onPress={() => void handleCreateVaultEmail()}
               loading={creatingChannel}

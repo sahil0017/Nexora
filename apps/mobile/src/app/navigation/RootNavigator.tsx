@@ -3,7 +3,7 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View } from 'react-native';
-import { colors } from '../theme/tokens';
+import { colors, fontFamily } from '../theme/tokens';
 import { NavIcon, NavIconName } from '../../shared/components/NavIcons';
 import HomeScreen from '../../features/home/screens/HomeScreen';
 import ExploreScreen from '../../features/explore/screens/ExploreScreen';
@@ -36,14 +36,14 @@ function Tabs() {
         headerShown: false,
         tabBarActiveTintColor: colors.navBlue,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+        tabBarLabelStyle: { fontFamily: fontFamily.medium, fontSize: 10.5, fontWeight: '600', marginTop: 2 },
         tabBarStyle: {
           backgroundColor: '#081018',
           borderTopColor: colors.borderSubtle,
           borderTopWidth: 1,
-          height: 64,
-          paddingBottom: 8,
-          paddingTop: 6,
+          height: 60,
+          paddingBottom: 7,
+          paddingTop: 5,
         },
       }}>
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: tabIcon('Home') }} />

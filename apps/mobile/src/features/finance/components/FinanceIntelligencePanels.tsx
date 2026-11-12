@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
 import {
   DebtBusinessOptimizeResponse,
   FinanceBudget,
@@ -82,12 +82,15 @@ export function MetricTile({
         flex: 1,
         backgroundColor: colors.bgElevated,
         borderRadius: radii.button,
-        padding: spacing.s,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        minHeight: 62,
+        justifyContent: 'center',
         borderWidth: 1,
         borderColor: colors.borderSubtle,
       }}>
-      <Text style={styles.labelMuted}>{label.toUpperCase()}</Text>
-      <Text style={{ color: accent, fontSize: 16, fontWeight: '800', marginTop: 2 }} numberOfLines={1}>
+      <Text style={styles.labelMuted} numberOfLines={1}>{label.toUpperCase()}</Text>
+      <Text style={{ color: accent, fontFamily: fontFamily.sans, fontSize: 15, fontWeight: '700', marginTop: 3 }} numberOfLines={1}>
         {value}
       </Text>
     </View>
@@ -218,40 +221,49 @@ export function GoalsAndPortfolioSection({
       </FadeIn>
 
       <FadeIn index={4}>
-        <SectionHeading title={`Holdings (${holdings.length}) & Debt (${liabilities.length})`} />
-        <Card style={{ gap: spacing.s }}>
-          {holdings.map(h => (
-            <View key={h.id} style={styles.lineRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{h.name}</Text>
-                <Text style={styles.labelMuted}>
-                  {h.symbol} · {h.plan_type.toUpperCase()} · XIRR {h.xirr_pct.toFixed(1)}%
+        <SectionHeading title={`Investments (${holdings.length}) & Loans (${liabilities.length})`} />
+        <Card style={{ gap: spacing.xs }}>
+          {holdings.length === 0 && liabilities.length === 0 ? (
+            <Text style={styles.subBody}>No investments or active loans recorded yet.</Text>
+          ) : null}
+          {holdings.map((h, idx) => {
+            const isLast = idx === holdings.length - 1 && liabilities.length === 0;
+            return (
+              <View key={h.id} style={[styles.lineRow, isLast && styles.lineRowLast]}>
+                <View style={{ flex: 1, paddingRight: spacing.s }}>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{h.name}</Text>
+                  <Text style={styles.labelMuted}>
+                    {h.symbol} · {h.plan_type.toUpperCase()} · XIRR {h.xirr_pct.toFixed(1)}%
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ color: moduleColors.finance, fontFamily: fontFamily.sans, fontWeight: '700', fontSize: 13.5 }}>
+                    {formatINR(h.current_value_inr, privacyMasked)}
+                  </Text>
+                  <Text style={{ color: colors.accentBright, fontFamily: fontFamily.medium, fontSize: 11, fontWeight: '600' }}>
+                    +{formatINR(h.unrealized_pnl_inr, privacyMasked)}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+          {liabilities.map((l, idx) => {
+            const isLast = idx === liabilities.length - 1;
+            return (
+              <View key={l.id} style={[styles.lineRow, isLast && styles.lineRowLast]}>
+                <View style={{ flex: 1, paddingRight: spacing.s }}>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{l.lender_name}</Text>
+                  <Text style={styles.labelMuted}>
+                    {l.loan_type.toUpperCase()} · {(l.interest_rate_apr * 100).toFixed(2)}% APR ·{' '}
+                    {l.remaining_months}m left
+                  </Text>
+                </View>
+                <Text style={{ color: colors.statusWarning, fontFamily: fontFamily.sans, fontWeight: '700', fontSize: 13.5 }}>
+                  -{formatINR(l.principal_outstanding, privacyMasked)}
                 </Text>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={{ color: moduleColors.finance, fontWeight: '800', fontSize: 14 }}>
-                  {formatINR(h.current_value_inr, privacyMasked)}
-                </Text>
-                <Text style={{ color: colors.accentBright, fontSize: 11.5, fontWeight: '700' }}>
-                  +{formatINR(h.unrealized_pnl_inr, privacyMasked)}
-                </Text>
-              </View>
-            </View>
-          ))}
-          {liabilities.map(l => (
-            <View key={l.id} style={styles.lineRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{l.lender_name}</Text>
-                <Text style={styles.labelMuted}>
-                  {l.loan_type.toUpperCase()} · {(l.interest_rate_apr * 100).toFixed(2)}% APR ·{' '}
-                  {l.remaining_months}m left
-                </Text>
-              </View>
-              <Text style={{ color: colors.statusWarning, fontWeight: '800', fontSize: 14 }}>
-                -{formatINR(l.principal_outstanding, privacyMasked)}
-              </Text>
-            </View>
-          ))}
+            );
+          })}
         </Card>
       </FadeIn>
     </>
@@ -464,12 +476,12 @@ export function MarketsDebtGraphSection({
 
   return (
     <FadeIn index={2}>
-      <SectionHeading title="Markets, Debt & Knowledge Graph" />
+      <SectionHeading title="Portfolio & Debt Insights" />
       <Card style={{ gap: spacing.m }}>
         <View style={styles.splitRow}>
           <View style={{ flex: 1 }}>
             <PrimaryButton
-              title="Analyze Markets & MF"
+              title="Mutual Fund Check"
               variant="secondary"
               onPress={runMarkets}
               loading={marketsLoading}
@@ -477,7 +489,7 @@ export function MarketsDebtGraphSection({
           </View>
           <View style={{ flex: 1 }}>
             <PrimaryButton
-              title="Debt vs SIP"
+              title="Loan vs SIP"
               variant="secondary"
               onPress={runDebtBusiness}
               loading={debtLoading}
@@ -488,10 +500,10 @@ export function MarketsDebtGraphSection({
         {marketsRes ? (
           <View style={styles.resultBox}>
             <Text style={styles.rowTitle}>
-              Regime: {(marketsRes.market_regime ?? 'unclassified').toUpperCase()}
+              Market Outlook: {(marketsRes.market_regime ?? 'unclassified').toUpperCase()}
             </Text>
             <Text style={styles.subBody}>
-              Regular-Plan Fee Drag:{' '}
+              Regular-Plan Commission Drag:{' '}
               {formatINR(marketsRes.portfolio_overlap?.regular_plan_annual_commission_drag_inr, privacyMasked)}/yr
             </Text>
           </View>
@@ -500,34 +512,34 @@ export function MarketsDebtGraphSection({
         {debtRes ? (
           <View style={styles.resultBox}>
             <Text style={styles.rowTitle}>
-              Strategy: {debtRes.debt_strategy?.prepay_vs_sip_recommendation ?? 'NO_ACTIVE_DEBT'}
+              Strategy: {(debtRes.debt_strategy?.prepay_vs_sip_recommendation ?? 'NO_ACTIVE_DEBT').replace(/_/g, ' ')}
             </Text>
             <Text style={styles.subBody}>
-              Business Verdict: {debtRes.business_intelligence?.unit_economics_verdict ?? 'NO_BUSINESS_DATA'}
+              Cashflow Verdict: {(debtRes.business_intelligence?.unit_economics_verdict ?? 'BALANCED').replace(/_/g, ' ')}
             </Text>
           </View>
         ) : null}
 
         <View style={styles.divider} />
 
-        <Text style={styles.labelMuted}>FINANCIAL KNOWLEDGE GRAPH SHOCK SIMULATOR</Text>
+        <Text style={styles.labelMuted}>MARKET SCENARIO STRESS TEST</Text>
         <View style={styles.chipRow}>
           {(['rbi_policy', 'fx_shock', 'budget_tax'] as const).map(ev => (
             <Chip
               key={ev}
-              label={ev.replace('_', ' ')}
+              label={ev === 'rbi_policy' ? 'RBI Rate Shift' : ev === 'fx_shock' ? 'FX Volatility' : 'Tax Policy Change'}
               active={shockEvent === ev}
               color={moduleColors.finance}
               onPress={() => setShockEvent(ev)}
             />
           ))}
         </View>
-        <PrimaryButton title="Propagate Macro Shock" onPress={runGraphShock} loading={graphLoading} />
+        <PrimaryButton title="Run Stress Test" onPress={runGraphShock} loading={graphLoading} />
 
         {graphRes ? (
           <View style={styles.resultBox}>
             <Text style={styles.rowTitle}>
-              Net Annual Impact: {formatINR(graphRes.net_annual_impact_inr, privacyMasked)}
+              Estimated Annual Impact: {formatINR(graphRes.net_annual_impact_inr, privacyMasked)}
             </Text>
             {graphRes.recommended_mitigation ? (
               <Text style={styles.subBody}>{graphRes.recommended_mitigation}</Text>
@@ -540,14 +552,14 @@ export function MarketsDebtGraphSection({
 }
 
 const styles = StyleSheet.create({
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
   splitRow: { flexDirection: 'row', gap: spacing.s },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   divider: { height: 1, backgroundColor: colors.borderSubtle, marginVertical: spacing.xs },
   labelMuted: { ...typography.label, color: colors.textMuted },
-  subBody: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
-  cardTitle: { fontSize: 14.5, fontWeight: '700', color: colors.textPrimary, flex: 1 },
-  rowTitle: { fontSize: 13.5, fontWeight: '700', color: colors.textPrimary },
+  subBody: { fontFamily: fontFamily.sans, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary },
+  cardTitle: { fontFamily: fontFamily.medium, fontSize: 13.5, fontWeight: '600', color: colors.textPrimary, flex: 1 },
+  rowTitle: { fontFamily: fontFamily.medium, fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   progressTrack: {
     height: 6,
     backgroundColor: colors.bgElevated,
@@ -563,9 +575,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderSubtle,
+  },
+  lineRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 2,
   },
   resultBox: {
     backgroundColor: colors.bgElevated,

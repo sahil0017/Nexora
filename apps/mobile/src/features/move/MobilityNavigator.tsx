@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View } from 'react-native';
-import { colors } from '../../app/theme/tokens';
+import { colors, fontFamily } from '../../app/theme/tokens';
 import { NavIcon, NavIconName } from '../../shared/components/NavIcons';
 import JourneyPlannerScreen from './screens/JourneyPlannerScreen';
 import ActivityScreen from '../activity/screens/ActivityScreen';
@@ -21,14 +21,14 @@ export default function MobilityNavigator() {
         headerShown: false,
         tabBarActiveTintColor: colors.navBlue,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+        tabBarLabelStyle: { fontFamily: fontFamily.medium, fontSize: 10.5, fontWeight: '600', marginTop: 2 },
         tabBarStyle: {
           backgroundColor: '#081018',
           borderTopColor: colors.glassBorder,
           borderTopWidth: 1,
-          height: 64,
-          paddingBottom: 8,
-          paddingTop: 6,
+          height: 60,
+          paddingBottom: 7,
+          paddingTop: 5,
         },
       }}>
       <Tab.Screen

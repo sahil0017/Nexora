@@ -1,5 +1,28 @@
+import { Platform } from 'react-native';
+
 // NEXORA Obsidian + Electric Navigation Blue + Emerald Telemetry design tokens —
 // single source of truth for colors, typography, radii, and spacing across mobile & web.
+export const fontFamily = {
+  sans: Platform.select({
+    ios: 'System',
+    android: 'sans-serif',
+    web: 'Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif',
+    default: 'System',
+  }),
+  medium: Platform.select({
+    ios: 'System',
+    android: 'sans-serif-medium',
+    web: 'Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif',
+    default: 'System',
+  }),
+  mono: Platform.select({
+    ios: 'Menlo',
+    android: 'monospace',
+    web: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    default: 'monospace',
+  }),
+} as const;
+
 export const colors = {
   bgPrimary: '#060B10',
   bgSurface: '#0D151E',
@@ -36,11 +59,46 @@ export const moduleColors = {
 } as const;
 
 export const typography = {
-  display: { fontSize: 30, fontWeight: '800' as const, letterSpacing: -0.5 },
-  screenTitle: { fontSize: 25, fontWeight: '800' as const, letterSpacing: -0.4 },
-  sectionHeading: { fontSize: 15, fontWeight: '700' as const, letterSpacing: 0.3 },
-  body: { fontSize: 14.5, fontWeight: '400' as const, lineHeight: 20 },
-  label: { fontSize: 12, fontWeight: '600' as const, letterSpacing: 0.4 },
+  display: {
+    fontFamily: fontFamily.sans,
+    fontSize: 24,
+    fontWeight: '700' as const,
+    letterSpacing: -0.4,
+    lineHeight: 30,
+  },
+  screenTitle: {
+    fontFamily: fontFamily.sans,
+    fontSize: 20,
+    fontWeight: '700' as const,
+    letterSpacing: -0.3,
+    lineHeight: 26,
+  },
+  sectionHeading: {
+    fontFamily: fontFamily.medium,
+    fontSize: 13.5,
+    fontWeight: '600' as const,
+    letterSpacing: 0.15,
+    lineHeight: 18,
+  },
+  body: {
+    fontFamily: fontFamily.sans,
+    fontSize: 13,
+    fontWeight: '400' as const,
+    lineHeight: 19,
+  },
+  label: {
+    fontFamily: fontFamily.medium,
+    fontSize: 11,
+    fontWeight: '600' as const,
+    letterSpacing: 0.3,
+    lineHeight: 15,
+  },
+  caption: {
+    fontFamily: fontFamily.sans,
+    fontSize: 10.5,
+    fontWeight: '500' as const,
+    lineHeight: 14,
+  },
 };
 
 export const spacing = {

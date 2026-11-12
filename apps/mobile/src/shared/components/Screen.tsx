@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { colors, spacing, typography } from '../../app/theme/tokens';
+import { colors, fontFamily, spacing, typography } from '../../app/theme/tokens';
 
 /** Standard screen scaffold: obsidian navigation canvas, back navigation (supports nested module tabs), top-right action, and brand pill. */
 export function Screen({
@@ -104,22 +104,24 @@ const styles = StyleSheet.create({
   brandDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.navBlue },
   brandLabel: {
     color: colors.statusInfo,
-    fontSize: 10.5,
-    fontWeight: '800',
-    letterSpacing: 1.2,
+    fontFamily: fontFamily.medium,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   backBtn: {
     alignSelf: 'flex-start',
     backgroundColor: colors.bgElevated,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
   },
   backText: {
     color: colors.statusInfo,
-    fontSize: 12.5,
-    fontWeight: '700',
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

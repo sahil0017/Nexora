@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Switch, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
-import { colors, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
 import { financeApi } from '../../../core/api/finance';
 import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { FadeIn, StatusPill } from '../../../core/design-system/motion';
@@ -70,7 +70,7 @@ export default function PrivacyPermissionsScreen() {
       setWipeMsg(`Cleared ${res.deleted_rows} synced financial record(s) from your Vault.`);
       await qc.invalidateQueries();
     } catch (err: any) {
-      setWipeMsg(`Could not clear data: ${err?.message ?? 'API error'}`);
+      setWipeMsg(`Could not clear data: ${err?.message ?? 'Unable to complete request'}`);
     } finally {
       setWiping(false);
     }
@@ -80,7 +80,7 @@ export default function PrivacyPermissionsScreen() {
     <Screen
       title="Privacy & Access"
       subtitle="Choose exactly what NEXORA can read or process on your device"
-      badge="ZERO-AA CONSENT"
+      badge="PRIVACY CONTROLS"
       rightAction={
         <StatusPill
           label={`${enabledCount}/${totalCount} Active`}
@@ -98,7 +98,7 @@ export default function PrivacyPermissionsScreen() {
               />
             </View>
             <Text style={styles.subBody}>
-              NEXORA operates with Zero Account Aggregator logins and zero background bank scraping. Toggle each capability below — turning a permission off immediately stops that feature from reading or sending data.
+              NEXORA works without bank logins or background scraping. Toggle each capability below — turning a permission off immediately stops that feature from reading or sending data.
             </Text>
             <View style={styles.pairRow}>
               <View style={{ flex: 1 }}>
@@ -196,8 +196,8 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   domainDot: { width: 8, height: 8, borderRadius: 4 },
   domainText: { ...typography.label, color: colors.textMuted },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.textPrimary, flexShrink: 1 },
-  subBody: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
+  cardTitle: { fontFamily: fontFamily.medium, fontSize: 14, fontWeight: '600', color: colors.textPrimary, flexShrink: 1 },
+  subBody: { fontFamily: fontFamily.sans, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary },
   labelMuted: { ...typography.label, color: colors.textMuted },
   metaBox: {
     backgroundColor: colors.bgElevated,
@@ -208,6 +208,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSubtle,
   },
-  metaText: { fontSize: 12, lineHeight: 17, color: colors.textSecondary },
-  osStatus: { fontSize: 11.5, fontWeight: '700', color: colors.textMuted, marginTop: 2 },
+  metaText: { fontFamily: fontFamily.sans, fontSize: 11.5, lineHeight: 16, color: colors.textSecondary },
+  osStatus: { fontFamily: fontFamily.medium, fontSize: 11, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
 });

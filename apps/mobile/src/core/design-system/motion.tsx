@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleProp, Text, View, ViewStyle } from 'react-native';
-import { colors, spacing } from '../../app/theme/tokens';
+import { colors, fontFamily, spacing } from '../../app/theme/tokens';
 
 /** Fades and lifts children in; `index` staggers siblings. */
 export function FadeIn({
@@ -135,10 +135,10 @@ export function Chip({
       accessibilityLabel={label}
       style={{
         backgroundColor: active ? color : colors.bgElevated,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
         borderRadius: 999,
-        minHeight: 36,
+        minHeight: 32,
         justifyContent: 'center',
         borderWidth: 1,
         borderColor: active ? color : colors.borderSubtle,
@@ -146,8 +146,9 @@ export function Chip({
       <Text
         style={{
           color: active ? activeText : colors.textPrimary,
-          fontSize: 12.5,
-          fontWeight: active ? '800' : '600',
+          fontFamily: fontFamily.medium,
+          fontSize: 12,
+          fontWeight: active ? '700' : '500',
         }}>
         {label}
       </Text>
@@ -194,7 +195,7 @@ export function StatusPill({
         borderColor: c + '44',
       }}>
       <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c }} />
-      <Text style={{ color: c, fontSize: 10.5, letterSpacing: 0.8, fontWeight: '800' }}>
+      <Text style={{ color: c, fontFamily: fontFamily.medium, fontSize: 10, letterSpacing: 0.6, fontWeight: '700' }}>
         {label}
       </Text>
     </View>

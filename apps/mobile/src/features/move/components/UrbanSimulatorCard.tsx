@@ -33,8 +33,8 @@ export function UrbanSimulatorCard({ result, running, onSimulate }: Props) {
     <Card style={styles.card}>
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.kicker}>PILLAR 10 · URBAN WHAT-IF SANDBOX</Text>
-          <Text style={styles.title}>Simulate City Intervention</Text>
+          <Text style={styles.kicker}>CITY TRAFFIC SIMULATOR</Text>
+          <Text style={styles.title}>Test Traffic Intervention</Text>
         </View>
         <StatusPill tone="info" label={`${intensity}% intensity`} />
       </View>
@@ -63,7 +63,7 @@ export function UrbanSimulatorCard({ result, running, onSimulate }: Props) {
       </View>
 
       <PrimaryButton
-        title={running ? 'Running Counterfactual Twin…' : 'Run Urban Simulation'}
+        title={running ? 'Simulating Impact…' : 'Run Traffic Simulation'}
         onPress={() => onSimulate(intervention, intensity)}
         disabled={running}
         loading={running}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { colors, fontFamily, radii, spacing, typography } from '../../../app/theme/tokens';
 import { Card } from '../../../core/design-system/components';
 import { Chip, StatusPill } from '../../../core/design-system/motion';
 import { DigitalTwinState, PrivacyStatus } from '../../../core/api/move';
@@ -40,8 +40,8 @@ export function DigitalTwinOverviewCard({
   if (loading && !twin) {
     return (
       <Card style={styles.card}>
-        <Text style={styles.title}>City Movement Digital Twin</Text>
-        <Text style={styles.muted}>Syncing H3 cross-domain state (humans, vehicles, animals)…</Text>
+        <Text style={styles.title}>City Mobility Pulse</Text>
+        <Text style={styles.muted}>Syncing live area mobility conditions…</Text>
       </Card>
     );
   }
@@ -55,31 +55,31 @@ export function DigitalTwinOverviewCard({
     <Card style={styles.card}>
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.kicker}>12-PILLAR CITY DIGITAL TWIN</Text>
-          <Text style={styles.title}>Cross-Domain Movement State</Text>
+          <Text style={styles.kicker}>CITY MOBILITY PULSE</Text>
+          <Text style={styles.title}>Area Movement Overview</Text>
         </View>
         <StatusPill
           tone={twin.system_health_index >= 75 ? 'success' : twin.system_health_index >= 55 ? 'warning' : 'danger'}
-          label={`Health ${Math.round(twin.system_health_index)}/100`}
+          label={`Score ${Math.round(twin.system_health_index)}/100`}
         />
       </View>
 
       <Text style={styles.subText}>
-        H3 Cell {twin.h3_index} · Dominant:{' '}
+        Primary pattern:{' '}
         <Text style={styles.highlight}>{(twin.cross_domain?.dominant_interaction ?? 'balanced').replace(/_/g, ' ')}</Text>
       </Text>
 
-      {/* Cross-domain tensor meters */}
+      {/* Activity meters */}
       <View style={styles.meterBlock}>
-        <MeterRow label="Humans & Crowd" pct={humanPct} color={colors.routeCyan} />
+        <MeterRow label="Pedestrian & Crowd" pct={humanPct} color={colors.routeCyan} />
         <MeterRow label="Vehicle Load" pct={vehPct} color={colors.navBlue} />
-        <MeterRow label="Animal Conflict" pct={aniPct} color={colors.statusWarning} />
+        <MeterRow label="Roadside Hazard Risk" pct={aniPct} color={colors.statusWarning} />
       </View>
 
       {/* Crowd Forecast Horizons */}
       {(twin.crowd_intelligence?.forecasts ?? []).length > 0 ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Predictive Crowd Horizons</Text>
+          <Text style={styles.sectionTitle}>Upcoming Crowd Forecast</Text>
           <View style={styles.horizonRow}>
             {twin.crowd_intelligence.forecasts.slice(0, 3).map(f => (
               <View key={f.horizon_minutes} style={styles.horizonPill}>
@@ -92,7 +92,7 @@ export function DigitalTwinOverviewCard({
         </View>
       ) : null}
 
-      {/* Pedestrian Safety & Animal Conflict */}
+      {/* Pedestrian Safety & Roadside Alerts */}
       <View style={styles.safetyGrid}>
         <View style={styles.safetyBox}>
           <View style={styles.safetyTop}>
@@ -109,7 +109,7 @@ export function DigitalTwinOverviewCard({
 
         <View style={styles.safetyBox}>
           <View style={styles.safetyTop}>
-            <Text style={styles.safetyLabel}>Animal Conflict</Text>
+            <Text style={styles.safetyLabel}>Animal Crossing</Text>
             <StatusPill
               tone={riskTone(twin.animal_conflict?.risk_level ?? 'low')}
               label={`${(twin.animal_conflict?.risk_level ?? 'low').toUpperCase()} · ${Math.round((twin.animal_conflict?.conflict_risk_score ?? 0) * 100)}%`}
@@ -133,17 +133,17 @@ export function DigitalTwinOverviewCard({
       <View style={styles.section}>
         <View style={styles.headerRow}>
           <Text style={styles.sectionTitle}>
-            Road Memory Network ({(twin.road_memory_nodes ?? []).length} active nodes)
+            Road Conditions ({(twin.road_memory_nodes ?? []).length} active)
           </Text>
-          <StatusPill tone="info" label="Bayesian Quorum" />
+          <StatusPill tone="info" label="Community Verified" />
         </View>
         {(twin.road_memory_nodes ?? []).length === 0 ? (
-          <Text style={styles.muted}>No decaying road anomalies in this 5 km corridor.</Text>
+          <Text style={styles.muted}>No active road anomalies reported along this corridor.</Text>
         ) : (
           (twin.road_memory_nodes ?? []).slice(0, 3).map(n => (
             <View key={n.node_id} style={styles.memoryRow}>
               <Text style={styles.memoryText}>
-                {n.condition_type.replace(/_/g, ' ')} · {n.observation_count}x obs ({Math.round(n.confidence * 100)}% conf)
+                {n.condition_type.replace(/_/g, ' ')} · {n.observation_count} reports ({Math.round(n.confidence * 100)}% confidence)
               </Text>
               <StatusPill tone={n.quorum_verified ? 'success' : 'warning'} label={n.quorum_verified ? 'Verified' : 'Pending'} />
             </View>
@@ -160,19 +160,17 @@ export function DigitalTwinOverviewCard({
       {/* Privacy Shield */}
       <View style={styles.privacyBar}>
         <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.privacyText}>
-              Privacy Shield: k ≥ {privacy?.k_threshold ?? 3} anonymity · Laplace ε={privacy?.epsilon_budget ?? 1.0} DP
-            </Text>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={styles.privacyText}>Privacy Shield Active</Text>
             <Text style={styles.privacyMeta}>
               {privacy
-                ? `${privacy.total_pings_processed} pings · ${privacy.total_cells_published} pub / ${privacy.total_cells_suppressed} suppressed`
-                : 'No PII stored'}
+                ? 'Location updates are anonymized before sharing.'
+                : 'No personal identifiers stored.'}
             </Text>
           </View>
           {onContributePrivacyPing ? (
             <Chip
-              label={submittingAction ? 'Sending…' : 'Share Ping'}
+              label={submittingAction ? 'Sending…' : 'Share Update'}
               onPress={onContributePrivacyPing}
             />
           ) : null}
@@ -200,63 +198,67 @@ function MeterRow({ label, pct, color }: { label: string; pct: number; color: st
 const styles = StyleSheet.create({
   card: { marginBottom: spacing.m, gap: spacing.s },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
-  kicker: { ...typography.label, color: colors.routeCyan, fontSize: 10 },
-  title: { ...typography.sectionHeading, color: colors.textPrimary },
-  subText: { ...typography.label, color: colors.textSecondary },
-  highlight: { color: colors.textPrimary, fontWeight: '700' },
-  muted: { ...typography.label, color: colors.textMuted },
+  kicker: { ...typography.caption, color: colors.routeCyan, fontWeight: '700', letterSpacing: 0.6 },
+  title: { ...typography.sectionHeading, color: colors.textPrimary, marginTop: 2 },
+  subText: { fontFamily: fontFamily.sans, fontSize: 12, color: colors.textSecondary },
+  highlight: { color: colors.textPrimary, fontWeight: '600', textTransform: 'capitalize' },
+  muted: { fontFamily: fontFamily.sans, fontSize: 12, color: colors.textMuted },
   meterBlock: { gap: spacing.xs, marginTop: spacing.xs },
-  meterRow: { gap: 3 },
-  meterLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  meterName: { ...typography.label, color: colors.textSecondary, fontSize: 11.5 },
-  meterPct: { ...typography.label, color: colors.textPrimary, fontSize: 11.5 },
+  meterRow: { gap: 4 },
+  meterLabels: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  meterName: { fontFamily: fontFamily.medium, color: colors.textSecondary, fontSize: 11.5 },
+  meterPct: { fontFamily: fontFamily.medium, color: colors.textPrimary, fontSize: 11.5, fontWeight: '600' },
   meterTrack: { height: 7, borderRadius: 4, backgroundColor: colors.bgPrimary, overflow: 'hidden' },
   meterFill: { height: 7, borderRadius: 4 },
-  section: { gap: spacing.xs, marginTop: spacing.xs },
-  sectionTitle: { ...typography.label, color: colors.textPrimary, fontWeight: '700' },
-  horizonRow: { flexDirection: 'row', gap: spacing.xs },
+  section: { gap: spacing.s, marginTop: spacing.xs },
+  sectionTitle: { fontFamily: fontFamily.medium, fontSize: 12.5, color: colors.textPrimary, fontWeight: '600' },
+  horizonRow: { flexDirection: 'row', gap: spacing.s },
   horizonPill: {
     flex: 1,
     backgroundColor: colors.bgPrimary,
     borderRadius: radii.button,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
-    padding: spacing.xs,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
     alignItems: 'center',
+    gap: 2,
   },
-  horizonLabel: { ...typography.label, color: colors.textMuted, fontSize: 10 },
-  horizonVal: { ...typography.sectionHeading, color: colors.textPrimary, fontSize: 16 },
-  horizonRisk: { ...typography.label, color: colors.routeCyan, fontSize: 10, textTransform: 'capitalize' },
-  safetyGrid: { gap: spacing.xs, marginTop: spacing.xs },
+  horizonLabel: { ...typography.caption, color: colors.textMuted },
+  horizonVal: { fontFamily: fontFamily.sans, color: colors.textPrimary, fontSize: 15, fontWeight: '700' },
+  horizonRisk: { ...typography.caption, color: colors.routeCyan, textTransform: 'capitalize' },
+  safetyGrid: { gap: spacing.s, marginTop: spacing.xs },
   safetyBox: {
     backgroundColor: colors.bgPrimary,
     borderRadius: radii.button,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
-    padding: spacing.s,
-    gap: 4,
+    padding: 10,
+    gap: 6,
   },
-  safetyTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  safetyLabel: { ...typography.label, color: colors.textPrimary, fontWeight: '700' },
-  safetyHint: { ...typography.label, color: colors.textSecondary, fontSize: 11.5 },
+  safetyTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: spacing.s },
+  safetyLabel: { fontFamily: fontFamily.medium, fontSize: 12.5, color: colors.textPrimary, fontWeight: '600' },
+  safetyHint: { fontFamily: fontFamily.sans, color: colors.textSecondary, fontSize: 11.5, lineHeight: 16 },
   memoryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: spacing.s,
     backgroundColor: colors.bgPrimary,
-    padding: spacing.xs,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: radii.button,
   },
-  memoryText: { ...typography.label, color: colors.textPrimary, textTransform: 'capitalize', flex: 1 },
+  memoryText: { fontFamily: fontFamily.sans, fontSize: 12, color: colors.textPrimary, textTransform: 'capitalize', flex: 1 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 2 },
   privacyBar: {
     marginTop: spacing.xs,
-    padding: spacing.xs,
+    padding: 10,
     borderRadius: radii.button,
     backgroundColor: 'rgba(16, 185, 129, 0.10)',
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.25)',
   },
-  privacyText: { ...typography.label, color: colors.accentBright, fontSize: 11 },
-  privacyMeta: { ...typography.label, color: colors.textSecondary, fontSize: 10.5 },
+  privacyText: { fontFamily: fontFamily.medium, color: colors.accentBright, fontSize: 11.5, fontWeight: '600' },
+  privacyMeta: { fontFamily: fontFamily.sans, color: colors.textSecondary, fontSize: 11 },
 });

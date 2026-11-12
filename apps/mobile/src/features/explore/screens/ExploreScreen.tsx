@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,24 +11,26 @@ import {
   SegmentedControl,
 } from '../../../core/design-system/components';
 import { FadeIn, Skeleton, Tappable } from '../../../core/design-system/motion';
-import { colors, moduleColors, spacing } from '../../../app/theme/tokens';
-import { moveApi, platformApi } from '../../../core/api/move';
+import { colors, fontFamily, moduleColors, spacing } from '../../../app/theme/tokens';
+import { platformApi } from '../../../core/api/move';
 import { useMe } from '../../../core/auth/useMe';
 
 const MODULE_INFO: Record<string, { label: string; desc: string }> = {
-  move: { label: 'Mobility (MoveSmart)', desc: '3D Navigation HUD, Live Radar, Places & Prefs' },
-  finance: { label: 'Finance Intelligence', desc: 'Zero-AA Digital Twin, Edge E2EE, Tax, Monte Carlo & AI CFO' },
+  move: { label: 'Mobility & Navigation', desc: 'Turn-by-turn routes, live traffic, places & alerts' },
+  finance: { label: 'Wealth & Finance', desc: 'Net worth, accounts, tax planning & portfolio insights' },
+  assistant: { label: 'Copilot', desc: 'Personal AI assistant for commute, wealth & daily tasks' },
   health: { label: 'Health', desc: 'Reports, wellness records & health insights' },
   work: { label: 'Work', desc: 'Tasks, morning briefs & schedule automation' },
 };
 
+const MODULE_ORDER = ['move', 'finance', 'assistant', 'health', 'work'];
+
 const TABS = [
   { key: 'modules', label: 'Modules' },
   { key: 'notes', label: 'Notes' },
-  { key: 'stack', label: 'AI Stack' },
 ] as const;
 
-// EX-01 NEXORA Explore — directory for all NEXORA modules, shared notes (/documents), and AI stack.
+// EX-01 NEXORA Explore — directory for all NEXORA modules and shared notes (/documents).
 export default function ExploreScreen() {
   const nav = useNavigation<any>();
   const qc = useQueryClient();
@@ -40,7 +42,6 @@ export default function ExploreScreen() {
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteBody, setNoteBody] = useState('');
-  const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
 
   const docs = useQuery({
     queryKey: ['documents', userId],
@@ -69,27 +70,32 @@ export default function ExploreScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', userId] }),
   });
 
-  const stack = useQuery({
-    queryKey: ['stack-libraries'],
-    queryFn: moveApi.stackLibraries,
-    staleTime: 300_000,
-    retry: 0,
-  });
+  const modules = useMemo(() => {
+    const raw = me.data?.modules ?? ['move', 'finance', 'health', 'work'];
+    return [...raw].sort((a, b) => {
+      const ia = MODULE_ORDER.indexOf(a);
+      const ib = MODULE_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+  }, [me.data?.modules]);
 
   const openModule = (key: string) => {
-    if (key === 'move') {
+    const k = key.trim().toLowerCase();
+    if (k === 'move') {
       nav.navigate('Mobility', { screen: 'Navigate' });
-    } else if (key === 'finance') {
+    } else if (k === 'finance') {
       nav.navigate('Finance');
+    } else if (k === 'assistant') {
+      nav.navigate('AI');
     } else {
-      nav.navigate('ModuleHub', { module: key });
+      nav.navigate('ModuleHub', { module: k });
     }
   };
 
   return (
     <Screen
       title="Explore"
-      subtitle="All NEXORA modules, notes & AI intelligence layers"
+      subtitle="All your modules and saved notes"
       badge="NEXORA · DIRECTORY"
       rightAction={
         tab === 'notes' ? (
@@ -104,10 +110,14 @@ export default function ExploreScreen() {
         {tab === 'modules' && (
           <View style={styles.list}>
             {me.isLoading && <Skeleton height={56} />}
-            {me.isError && <Text style={{ color: colors.textSecondary }}>Modules are unavailable right now.</Text>}
-            {(me.data?.modules ?? ['move', 'finance', 'health', 'work']).map((m, i) => {
+            {me.isError && (
+              <Text style={{ color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 13 }}>
+                Modules are unavailable right now.
+              </Text>
+            )}
+            {modules.map((m, i) => {
               const info = MODULE_INFO[m];
-              const isLaunched = m === 'move' || m === 'finance';
+              const isLaunched = m === 'move' || m === 'finance' || m === 'assistant';
               return (
                 <FadeIn key={m} index={i}>
                   <Tappable onPress={() => openModule(m)} accessibilityLabel={`${isLaunched ? 'Launch' : 'Open'} ${m}`}>
@@ -119,14 +129,8 @@ export default function ExploreScreen() {
                         ]}
                       />
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 15 }}>
-                          {info?.label ?? m}
-                        </Text>
-                        {info?.desc ? (
-                          <Text style={{ color: colors.textSecondary, fontSize: 12.5, marginTop: 2 }}>
-                            {info.desc}
-                          </Text>
-                        ) : null}
+                        <Text style={styles.moduleTitle}>{info?.label ?? m}</Text>
+                        {info?.desc ? <Text style={styles.moduleDesc}>{info.desc}</Text> : null}
                       </View>
                       <View
                         style={[
@@ -149,7 +153,7 @@ export default function ExploreScreen() {
           <View style={{ gap: spacing.m }}>
             {showNoteForm && (
               <Card variant="featured" style={{ gap: spacing.s }}>
-                <Text style={styles.cardHeading}>New NEXORA note</Text>
+                <Text style={styles.cardHeading}>New note</Text>
                 <Input value={noteTitle} onChangeText={setNoteTitle} placeholder="Note title" />
                 <Input value={noteBody} onChangeText={setNoteBody} placeholder="Details…" />
                 <PrimaryButton
@@ -166,9 +170,7 @@ export default function ExploreScreen() {
               <View style={styles.placeRow}>
                 <Text style={styles.cardHeading}>Saved records & notes</Text>
                 <TouchableOpacity onPress={() => setShowNoteForm(v => !v)}>
-                  <Text style={{ color: colors.navBlue, fontSize: 12.5, fontWeight: '700' }}>
-                    {showNoteForm ? 'Cancel' : '+ Add note'}
-                  </Text>
+                  <Text style={styles.addNoteLink}>{showNoteForm ? 'Cancel' : '+ Add note'}</Text>
                 </TouchableOpacity>
               </View>
 
@@ -182,12 +184,8 @@ export default function ExploreScreen() {
                   return (
                     <View key={d.id} style={styles.noteItem}>
                       <Tappable onPress={() => setExpandedNoteId(expanded ? null : d.id)} style={{ flex: 1 }}>
-                        <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
-                          {d.title || 'Note'}
-                        </Text>
-                        <Text
-                          numberOfLines={expanded ? undefined : 1}
-                          style={{ color: colors.textSecondary, fontSize: 12.5, marginTop: 2 }}>
+                        <Text style={styles.noteTitle}>{d.title || 'Note'}</Text>
+                        <Text numberOfLines={expanded ? undefined : 1} style={styles.noteBody}>
                           {d.content}
                         </Text>
                       </Tappable>
@@ -195,7 +193,7 @@ export default function ExploreScreen() {
                         onPress={() => delDoc.mutate(d.id)}
                         style={styles.delBtn}
                         accessibilityLabel="Delete note">
-                        <Text style={{ color: colors.statusDanger, fontSize: 12, fontWeight: '700' }}>Delete</Text>
+                        <Text style={styles.delBtnText}>Delete</Text>
                       </TouchableOpacity>
                     </View>
                   );
@@ -203,52 +201,6 @@ export default function ExploreScreen() {
               )}
             </Card>
           </View>
-        )}
-
-        {tab === 'stack' && (
-          <Card style={{ gap: spacing.s }}>
-            <Text style={styles.cardHeading}>Active intelligence stack</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
-              Tap any layer to inspect live engines & libraries:
-            </Text>
-            {stack.isLoading && <Skeleton height={48} />}
-            {stack.data?.layers &&
-              Object.entries(stack.data.layers).map(([layer, items]) => {
-                const isOpen = expandedLayer === layer;
-                const list = Array.isArray(items) ? items : [];
-                return (
-                  <Tappable
-                    key={layer}
-                    onPress={() => setExpandedLayer(isOpen ? null : layer)}
-                    style={styles.layerCard}>
-                    <View style={styles.placeRow}>
-                      <Text style={{ color: colors.textPrimary, textTransform: 'capitalize', fontWeight: '700', fontSize: 13.5 }}>
-                        {layer.replace(/_/g, ' ')}
-                      </Text>
-                      <Text style={{ color: colors.navBlue, fontSize: 12, fontWeight: '700' }}>
-                        {list.length} {isOpen ? '▲' : '▼'}
-                      </Text>
-                    </View>
-                    {isOpen ? (
-                      <View style={{ marginTop: 8, gap: 4 }}>
-                        {list.map((x: any, idx: number) => (
-                          <Text key={idx} style={{ color: colors.textSecondary, fontSize: 12 }}>
-                            • {typeof x === 'string' ? x : `${x.name}${x.role ? ` — ${x.role}` : ''}`}
-                          </Text>
-                        ))}
-                      </View>
-                    ) : (
-                      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }} numberOfLines={1}>
-                        {list
-                          .slice(0, 3)
-                          .map((x: any) => (typeof x === 'string' ? x : x.name))
-                          .join(', ')}
-                      </Text>
-                    )}
-                  </Tappable>
-                );
-              })}
-          </Card>
         )}
       </View>
     </Screen>
@@ -258,23 +210,26 @@ export default function ExploreScreen() {
 const styles = StyleSheet.create({
   actionPill: {
     backgroundColor: colors.navBlue,
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  actionPillText: { color: '#FFFFFF', fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '700' },
+  cardHeading: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 14, fontWeight: '600' },
+  list: { gap: spacing.s, marginBottom: spacing.l },
+  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.m },
+  badge: { width: 9, height: 9, borderRadius: 5 },
+  moduleTitle: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontWeight: '600', fontSize: 14 },
+  moduleDesc: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12, marginTop: 2, lineHeight: 17 },
+  placeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  addNoteLink: { color: colors.navBlue, fontFamily: fontFamily.medium, fontSize: 12, fontWeight: '600' },
+  driveMiniBtn: {
+    backgroundColor: colors.navBlue,
+    paddingHorizontal: 11,
     paddingVertical: 6,
     borderRadius: 999,
   },
-  actionPillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  cardHeading: { color: colors.textPrimary, fontSize: 15.5, fontWeight: '800' },
-  list: { gap: spacing.s, marginBottom: spacing.l },
-  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.m },
-  badge: { width: 10, height: 10, borderRadius: 5 },
-  placeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  driveMiniBtn: {
-    backgroundColor: colors.navBlue,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
-  driveMiniText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  driveMiniText: { color: '#FFFFFF', fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '700' },
   noteItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -283,15 +238,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
   },
+  noteTitle: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontWeight: '600', fontSize: 13.5 },
+  noteBody: { color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 12, marginTop: 2 },
   delBtn: {
     backgroundColor: 'rgba(239, 68, 68, 0.14)',
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 999,
   },
-  layerCard: {
-    backgroundColor: colors.bgElevated,
-    borderRadius: 12,
-    padding: 12,
-  },
+  delBtnText: { color: colors.statusDanger, fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '600' },
 });
