@@ -44,6 +44,11 @@ stack_output() {
     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
 
+stack_param() {
+  "$AWS" cloudformation describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='$1'].ParameterValue" --output text
+}
+
 live_public_ip() {
   local iid ip=""
   iid="$(stack_output InstanceId 2>/dev/null || true)"
@@ -94,6 +99,8 @@ wait_ssm() {
 
 deploy() {
   need_env
+  local gh_repo="${GITHUB_REPO:-$(stack_param GitHubRepo 2>/dev/null || true)}"
+  [ "$gh_repo" = "None" ] && gh_repo=""
   step "Deploying CloudFormation stack '$STACK' in $REGION (free tier)"
   "$AWS" cloudformation deploy \
     --template-file infra/aws/template.yaml \
@@ -107,7 +114,8 @@ deploy() {
       KeyPairName="${KEY_PAIR_NAME:-}" \
       DocumentsTableName="${DDB_DOCS_TABLE:-nexora-dev-documents}" \
       DBUsername="${DB_USERNAME:-nexora}" \
-      DBPassword="$DB_PASSWORD"
+      DBPassword="$DB_PASSWORD" \
+      GitHubRepo="$gh_repo"
 
   local bucket account rds_host rds_port sns_topic sqs_queue public_ip tag
   bucket="$(stack_output ArtifactsBucket)"
@@ -379,6 +387,8 @@ deploy_config() {
 
 deploy_infra() {
   need_env
+  local gh_repo="${GITHUB_REPO:-$(stack_param GitHubRepo 2>/dev/null || true)}"
+  [ "$gh_repo" = "None" ] && gh_repo=""
   step "Updating CloudFormation stack '$STACK' only (RDS / DynamoDB / SQS / SNS / IAM)"
   "$AWS" cloudformation deploy \
     --template-file infra/aws/template.yaml \
@@ -392,7 +402,8 @@ deploy_infra() {
       KeyPairName="${KEY_PAIR_NAME:-}" \
       DocumentsTableName="${DDB_DOCS_TABLE:-nexora-dev-documents}" \
       DBUsername="${DB_USERNAME:-nexora}" \
-      DBPassword="$DB_PASSWORD"
+      DBPassword="$DB_PASSWORD" \
+      GitHubRepo="$gh_repo"
   deploy_config "$@"
 }
 

@@ -4,39 +4,334 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_all:
+        description: "Run all verification jobs regardless of changed paths"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  go-api:
+  changes:
+    name: Detect changed layers
     runs-on: ubuntu-latest
+    outputs:
+      go_api: ${{ steps.filter.outputs.go_api }}
+      python_ml: ${{ steps.filter.outputs.python_ml }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+      contracts_infra: ${{ steps.filter.outputs.contracts_infra }}
+      migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go_api:
+              - 'platform/api/**'
+              - '.github/workflows/ci.yml'
+            python_ml:
+              - 'intelligence/**'
+              - '.github/workflows/ci.yml'
+            mobile:
+              - 'apps/mobile/**'
+              - '.github/workflows/ci.yml'
+            contracts_infra:
+              - 'contracts/**'
+              - 'infra/**'
+              - 'scripts/**'
+              - 'platform/api/migrations/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/ci.yml'
+            migrations:
+              - 'platform/api/migrations/**'
+              - 'infra/postgres/**'
+
+  go-api:
+    name: Go API (test, vet, build, image)
+    needs: changes
+    if: ${{ needs.changes.outputs.go_api == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_all) }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
-      - name: Build
-        working-directory: platform/api
-        run: go build ./...
-      - name: Test
-        working-directory: platform/api
-        run: go test ./...
+          go-version-file: platform/api/go.mod
+          cache-dependency-path: platform/api/go.sum
 
-  mobile-typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check gofmt (strict on changed files, warn on pre-existing drift)
+        working-directory: .
+        run: |
+          unformatted="$(cd platform/api && gofmt -l .)"
+          if [ -z "$unformatted" ]; then
+            echo "All Go files are properly formatted."
+            exit 0
+          fi
+          base_ref="${{ github.event.pull_request.base.sha || github.event.before }}"
+          changed_go=""
+          if [ -n "$base_ref" ] && [ "$base_ref" != "0000000000000000000000000000000000000000" ]; then
+            changed_go="$(git diff --name-only "$base_ref"...HEAD -- 'platform/api/**/*.go' 'platform/api/*.go' || true)"
+          fi
+          failed=0
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if echo "$changed_go" | grep -qx "platform/api/$file"; then
+              echo "::error file=platform/api/$file::Go file modified in this change is not gofmt-formatted"
+              failed=1
+            else
+              echo "::warning file=platform/api/$file::Pre-existing gofmt drift (run 'make fmt')"
+            fi
+          done <<< "$unformatted"
+          exit "$failed"
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test (race + coverage)
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          {
+            echo "### Go API Test Coverage"
+            echo '```'
+            go tool cover -func=coverage.out | tail -n 15
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Go build
+        run: go build ./...
+
+      - name: Docker Buildx setup
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Go API container image (smoke + cache)
+        uses: docker/build-push-action@v6
         with:
-          node-version: "20"
-      - name: Typecheck (tsconfig sanity)
-        working-directory: apps/mobile
-        run: npx --yes typescript@5.6 --noEmit -p tsconfig.json || echo "deps pending install"
+          context: platform/api
+          push: false
+          load: true
+          tags: nexora/api:ci-${{ github.sha }}
+          cache-from: type=gha,scope=go-api
+          cache-to: type=gha,mode=max,scope=go-api
 
   python-ml:
+    name: Python ML (pytest, lint, image)
+    needs: changes
+    if: ${{ needs.changes.outputs.python_ml == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_all) }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: intelligence/ml-platform
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Syntax check
-        run: python -m compileall intelligence/ml-platform/src
+          cache: pip
+          cache-dependency-path: intelligence/ml-platform/pyproject.toml
+
+      - name: Install package and dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff critical lint (syntax & undefined names)
+        run: ruff check --select E9,F63,F7,F82 src tests ../gateway
+
+      - name: Ruff style check (strict on changed files)
+        working-directory: .
+        run: |
+          base_ref="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$base_ref" ] && [ "$base_ref" != "0000000000000000000000000000000000000000" ]; then
+            changed_py="$(git diff --name-only --diff-filter=ACMRT "$base_ref"...HEAD -- 'intelligence/**/*.py' || true)"
+            if [ -n "$changed_py" ]; then
+              echo "$changed_py" | xargs ruff check --config intelligence/ml-platform/pyproject.toml
+            fi
+          fi
+
+      - name: Run pytest suite
+        run: |
+          python -m pytest -v --tb=short --junitxml=pytest-report.xml
+          {
+            echo "### Python ML Test Suite"
+            echo "Passed pytest verification for mobility & finance intelligence engines."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bytecode compile check (ml-platform + gateway)
+        run: python -m compileall -q src ../gateway
+
+      - name: Docker Buildx setup
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Python ML container image (smoke + cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: intelligence/ml-platform
+          push: false
+          load: true
+          tags: nexora/ml:ci-${{ github.sha }}
+          cache-from: type=gha,scope=python-ml
+          cache-to: type=gha,mode=max,scope=python-ml
+
+  mobile-app:
+    name: Mobile App (typecheck, expo config, web export)
+    needs: changes
+    if: ${{ needs.changes.outputs.mobile == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_all) }}
+    runs-on: ubuntu-latest
+    env:
+      EXPO_NO_TELEMETRY: "1"
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Validate Expo public config
+        run: npx expo config --type public >/dev/null
+
+      - name: Bundle web export smoke test
+        run: |
+          npx expo export --platform web --output-dir /tmp/nexora-web-dist
+          rm -rf /tmp/nexora-web-dist
+
+  contracts-and-infra:
+    name: Contracts, Migrations, Compose & Scripts
+    needs: changes
+    if: ${{ needs.changes.outputs.contracts_infra == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_all) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate JSON event schemas & OpenAPI spec
+        run: |
+          pip install -q pyyaml
+          python - <<'PY'
+          import glob, json, yaml
+
+          for path in sorted(glob.glob("contracts/events/*.json")):
+              with open(path, encoding="utf-8") as f:
+                  data = json.load(f)
+              assert isinstance(data, dict), f"{path} must be a JSON object"
+              print(f"OK event schema: {path}")
+
+          with open("contracts/openapi/nexora-v1.yaml", encoding="utf-8") as f:
+              spec = yaml.safe_load(f)
+          for key in ("openapi", "info", "paths"):
+              assert key in spec, f"OpenAPI spec missing '{key}'"
+          print(f"OK OpenAPI {spec['openapi']} ({len(spec['paths'])} paths)")
+          PY
+
+      - name: Validate SQL migrations pairing & ordering
+        run: |
+          python - <<'PY'
+          import glob, os, re
+
+          ups = sorted(glob.glob("platform/api/migrations/*.up.sql"))
+          downs = sorted(glob.glob("platform/api/migrations/*.down.sql"))
+          assert ups, "No .up.sql migrations found"
+          up_names = [os.path.basename(p).removesuffix(".up.sql") for p in ups]
+          down_names = [os.path.basename(p).removesuffix(".down.sql") for p in downs]
+          assert up_names == down_names, f"Up/Down mismatch: {set(up_names) ^ set(down_names)}"
+          nums = []
+          for name in up_names:
+              m = re.match(r"^(\d{4})_", name)
+              assert m, f"Migration '{name}' must start with 4-digit prefix"
+              nums.append(int(m.group(1)))
+          assert nums == sorted(set(nums)), f"Duplicate or out-of-order migrations: {up_names}"
+          print(f"OK {len(up_names)} paired migrations: {up_names}")
+          PY
+
+      - name: Validate CloudFormation template YAML & Compose manifests
+        run: |
+          python - <<'PY'
+          import yaml
+
+          class CfnLoader(yaml.SafeLoader):
+              pass
+
+          CfnLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+          with open("infra/aws/template.yaml", encoding="utf-8") as f:
+              tpl = yaml.load(f, Loader=CfnLoader)
+          assert "Resources" in tpl and "Outputs" in tpl, "CloudFormation template incomplete"
+          print(f"OK CloudFormation template ({len(tpl['Resources'])} resources)")
+          PY
+
+          docker compose -f docker-compose.yml config -q
+          RDS_ENDPOINT=db.example.local \
+          DB_PASSWORD=dummy_password_123 \
+          DDB_DOCS_TABLE=nexora-dev-documents \
+          API_IMAGE=nexora/api:ci \
+          ML_IMAGE=nexora/ml:ci \
+            docker compose -f infra/aws/docker-compose.prod.yml config -q
+
+      - name: Shell syntax & ShellCheck on deploy scripts
+        run: |
+          bash -n scripts/deploy-aws.sh infra/aws/remote-deploy.sh
+          shellcheck -S warning scripts/deploy-aws.sh infra/aws/remote-deploy.sh
+
+  ci-gate:
+    name: CI Gate
+    needs: [changes, go-api, python-ml, mobile-app, contracts-and-infra]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate pipeline results & publish summary
+        run: |
+          {
+            echo "## NEXORA Smart CI Summary"
+            echo ""
+            echo "| Layer | Triggered | Result |"
+            echo "| --- | --- | --- |"
+            echo "| Go API | \`${{ needs.changes.outputs.go_api }}\` | \`${{ needs.go-api.result }}\` |"
+            echo "| Python ML | \`${{ needs.changes.outputs.python_ml }}\` | \`${{ needs.python-ml.result }}\` |"
+            echo "| Mobile App | \`${{ needs.changes.outputs.mobile }}\` | \`${{ needs.mobile-app.result }}\` |"
+            echo "| Contracts & Infra | \`${{ needs.changes.outputs.contracts_infra }}\` | \`${{ needs.contracts-and-infra.result }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for res in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.go-api.result }}" \
+            "${{ needs.python-ml.result }}" \
+            "${{ needs.mobile-app.result }}" \
+            "${{ needs.contracts-and-infra.result }}"; do
+            if [ "$res" != "success" ] && [ "$res" != "skipped" ]; then
+              echo "CI Gate failed: upstream job ended with '$res'"
+              exit 1
+            fi
+          done
+          echo "All triggered CI checks passed."

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+staged="$(git diff --cached --name-only --diff-filter=ACMRT)"
+[ -z "$staged" ] && exit 0
+
+if echo "$staged" | grep -q '^platform/api/'; then
+  echo "[pre-commit] Checking Go API (gofmt on staged, go vet, go test)..."
+  staged_go="$(echo "$staged" | grep -E '^platform/api/.*\.go$' || true)"
+  if [ -n "$staged_go" ]; then
+    unfmt="$(gofmt -l $staged_go)"
+    if [ -n "$unfmt" ]; then
+      echo "ERROR: Unformatted staged Go files (run 'make fmt'):" >&2
+      echo "$unfmt" >&2
+      exit 1
+    fi
+  fi
+  (cd platform/api && go vet ./... && go test ./...)
+fi
+
+if echo "$staged" | grep -q '^intelligence/'; then
+  echo "[pre-commit] Checking Python ML (pytest)..."
+  (cd intelligence/ml-platform && python3 -m pytest -q)
+fi
+
+if echo "$staged" | grep -q '^apps/mobile/'; then
+  echo "[pre-commit] Checking Mobile App (tsc --noEmit)..."
+  (cd apps/mobile && npm run typecheck)
+fi
+
+staged_sh="$(echo "$staged" | grep -E '^(scripts|infra/aws)/.*\.sh$' || true)"
+if [ -n "$staged_sh" ]; then
+  echo "[pre-commit] Checking shell syntax..."
+  bash -n $staged_sh
+fi

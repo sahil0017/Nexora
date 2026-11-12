@@ -1,0 +1,36 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot[bot]
+  categories:
+    - title: "Features"
+      labels:
+        - "feat"
+        - "enhancement"
+    - title: "Bug Fixes"
+      labels:
+        - "fix"
+        - "bug"
+    - title: "Go Control Plane & Finance/Mobility API"
+      labels:
+        - "area:go-api"
+    - title: "Python ML & Digital Twin Intelligence"
+      labels:
+        - "area:python-ml"
+    - title: "Mobile App (Expo / React Native)"
+      labels:
+        - "area:mobile"
+    - title: "Infrastructure, Migrations & CI/CD"
+      labels:
+        - "area:infra"
+        - "area:migrations"
+        - "area:ci"
+    - title: "Documentation & Contracts"
+      labels:
+        - "area:docs"
+        - "area:contracts"
+    - title: "Other Changes"
+      labels:
+        - "*"

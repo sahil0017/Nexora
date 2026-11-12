@@ -1,0 +1,57 @@
+"area:go-api":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'platform/api/**'
+
+"area:python-ml":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'intelligence/**'
+
+"area:mobile":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/mobile/**'
+
+"area:finance":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*finance*'
+          - '**/finance/**'
+
+"area:mobility":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*mobility*'
+          - '**/mobility/**'
+
+"area:contracts":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'contracts/**'
+
+"area:infra":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'infra/**'
+          - 'scripts/**'
+          - 'docker-compose.yml'
+
+"area:migrations":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'platform/api/migrations/**'
+          - 'infra/postgres/**'
+
+"area:ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - '.githooks/**'
+          - 'Makefile'
+
+"area:docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '*.md'

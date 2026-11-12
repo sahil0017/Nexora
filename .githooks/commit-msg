@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg_file="${1:?commit message file required}"
+subject="$(head -n 1 "$msg_file" | tr -d '\r')"
+
+# Allow git-generated merge/revert messages
+if [[ "$subject" =~ ^(Merge|Revert|fixup!|squash!) ]]; then
+  exit 0
+fi
+
+pattern='^(feat|fix|chore|docs|refactor|perf|test|ci|build|revert)(\([a-z0-9._/-]+\))?(!)?: [a-z0-9].+'
+if [[ ! "$subject" =~ $pattern ]]; then
+  cat >&2 <<EOF
+ERROR: Commit subject does not follow Conventional Commits:
+  "$subject"
+
+Expected format: <type>(<optional-scope>): <lowercase summary>
+Allowed types: feat, fix, chore, docs, refactor, perf, test, ci, build, revert
+Examples:
+  feat(finance): add sip ledger sync endpoint
+  fix(api): guard nil vault in envelope encryption
+  chore(ci): add smart path filters and ecr cache
+EOF
+  exit 1
+fi

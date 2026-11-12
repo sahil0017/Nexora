@@ -1,0 +1,84 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - "area:ci"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: "gomod"
+    directory: "/platform/api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "area:go-api"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(api)"
+
+  - package-ecosystem: "pip"
+    directory: "/intelligence/ml-platform"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "area:python-ml"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(ml)"
+
+  - package-ecosystem: "npm"
+    directory: "/apps/mobile"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    groups:
+      mobile-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "area:mobile"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(mobile)"
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/platform/api"
+      - "/intelligence/ml-platform"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    labels:
+      - "area:infra"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(docker)"

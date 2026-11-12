@@ -1,0 +1,268 @@
+name: cd-aws
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'platform/api/**'
+      - 'intelligence/ml-platform/**'
+      - 'infra/aws/**'
+      - 'infra/postgres/**'
+      - 'scripts/deploy-aws.sh'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deployment layer target"
+        type: choice
+        default: smart
+        options:
+          - smart
+          - api
+          - ml
+          - migrate
+          - config
+          - all
+      environment:
+        description: "Target AWS environment"
+        type: choice
+        default: dev
+        options:
+          - dev
+          - staging
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cd-aws-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan AWS deploy layers
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check_oidc.outputs.configured }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      target: ${{ steps.plan.outputs.target }}
+      need_api: ${{ steps.plan.outputs.need_api }}
+      need_ml: ${{ steps.plan.outputs.need_ml }}
+      need_migrate: ${{ steps.plan.outputs.need_migrate }}
+      need_config: ${{ steps.plan.outputs.need_config }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check AWS OIDC configuration
+        id: check_oidc
+        env:
+          ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -n "$ROLE_ARN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## AWS CD Skipped (OIDC not configured yet)"
+              echo ""
+              echo "Set repository secret \`AWS_DEPLOY_ROLE_ARN\` (provisionable via \`infra/aws/template.yaml\` with \`GitHubRepo=${{ github.repository }}\`) to enable automated zero-key AWS deployments."
+              echo "See [docs/runbooks/aws-cicd-oidc.md](docs/runbooks/aws-cicd-oidc.md)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Detect changed backend & infra layers
+        id: plan
+        run: |
+          tag="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+
+          requested="${{ inputs.target || 'smart' }}"
+          need_api=false
+          need_ml=false
+          need_migrate=false
+          need_config=false
+
+          case "$requested" in
+            all)
+              need_api=true; need_ml=true; need_migrate=true; need_config=true
+              ;;
+            api)
+              need_api=true; need_migrate=true
+              ;;
+            ml)
+              need_ml=true
+              ;;
+            migrate)
+              need_migrate=true
+              ;;
+            config)
+              need_config=true
+              ;;
+            smart)
+              before="${{ github.event.before }}"
+              if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+                changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+              else
+                changed="$(git diff --name-only HEAD~1..HEAD 2>/dev/null || true)"
+              fi
+              echo "Changed files:"
+              echo "$changed"
+
+              if echo "$changed" | grep -qE '^platform/api/.*\.(go|mod|sum)$|^platform/api/Dockerfile$'; then
+                need_api=true
+              fi
+              if echo "$changed" | grep -qE '^intelligence/ml-platform/'; then
+                need_ml=true
+              fi
+              if echo "$changed" | grep -qE '^platform/api/migrations/|^infra/postgres/'; then
+                need_migrate=true
+              fi
+              if echo "$changed" | grep -qE '^infra/aws/(docker-compose\.prod\.yml|Caddyfile|remote-deploy\.sh)$'; then
+                need_config=true
+              fi
+              ;;
+          esac
+
+          echo "target=$requested" >> "$GITHUB_OUTPUT"
+          echo "need_api=$need_api" >> "$GITHUB_OUTPUT"
+          echo "need_ml=$need_ml" >> "$GITHUB_OUTPUT"
+          echo "need_migrate=$need_migrate" >> "$GITHUB_OUTPUT"
+          echo "need_config=$need_config" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to AWS (${{ inputs.environment || 'dev' }})
+    needs: plan
+    if: >
+      needs.plan.outputs.configured == 'true' && (
+        needs.plan.outputs.need_api == 'true' ||
+        needs.plan.outputs.need_ml == 'true' ||
+        needs.plan.outputs.need_migrate == 'true' ||
+        needs.plan.outputs.need_config == 'true'
+      )
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      STACK: ${{ vars.AWS_STACK_NAME || 'nexora-free-tier' }}
+      RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: needs.plan.outputs.need_api == 'true' || needs.plan.outputs.need_ml == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: needs.plan.outputs.need_api == 'true' || needs.plan.outputs.need_ml == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Go API image to ECR
+        if: needs.plan.outputs.need_api == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: platform/api
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/nexora/api:${{ env.RELEASE_TAG }}
+          cache-from: type=gha,scope=go-api
+          cache-to: type=gha,mode=max,scope=go-api
+
+      - name: Build and push Python ML image to ECR
+        if: needs.plan.outputs.need_ml == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: intelligence/ml-platform
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/nexora/ml:${{ env.RELEASE_TAG }}
+          cache-from: type=gha,scope=python-ml
+          cache-to: type=gha,mode=max,scope=python-ml
+
+      - name: Package & ship deploy bundle via S3 + SSM (prebuilt pull mode)
+        run: |
+          set -euo pipefail
+          stack_output() {
+            aws cloudformation describe-stacks --stack-name "$STACK" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+
+          bucket="$(stack_output ArtifactsBucket)"
+          instance_id="$(stack_output InstanceId)"
+          ec2_state="$(aws ec2 describe-instances --instance-ids "$instance_id" \
+            --query "Reservations[0].Instances[0].State.Name" --output text)"
+          if [ "$ec2_state" != "running" ]; then
+            echo "ERROR: EC2 instance $instance_id is '$ec2_state'. Resume with './scripts/deploy-aws.sh start' before deploying." >&2
+            exit 1
+          fi
+
+          tmp="$(mktemp -d)"
+          COPYFILE_DISABLE=1 tar -czf "$tmp/cd-patch.tgz" \
+            --exclude '.DS_Store' \
+            platform/api/migrations infra/postgres infra/aws/remote-deploy.sh infra/aws/docker-compose.prod.yml infra/aws/Caddyfile
+          aws s3 cp --only-show-errors "$tmp/cd-patch.tgz" "s3://${bucket}/releases/${RELEASE_TAG}-cd.tgz"
+          rm -rf "$tmp"
+
+          deploy_steps=()
+          if [ "${{ needs.plan.outputs.need_config }}" = "true" ]; then
+            deploy_steps+=("PREBUILT_IMAGES=1 bash infra/aws/remote-deploy.sh /opt/nexora/current config")
+          fi
+          if [ "${{ needs.plan.outputs.need_api }}" = "true" ]; then
+            deploy_steps+=("PREBUILT_IMAGES=1 bash infra/aws/remote-deploy.sh /opt/nexora/current api")
+          elif [ "${{ needs.plan.outputs.need_migrate }}" = "true" ]; then
+            deploy_steps+=("PREBUILT_IMAGES=1 bash infra/aws/remote-deploy.sh /opt/nexora/current migrate")
+          fi
+          if [ "${{ needs.plan.outputs.need_ml }}" = "true" ]; then
+            deploy_steps+=("PREBUILT_IMAGES=1 bash infra/aws/remote-deploy.sh /opt/nexora/current ml")
+          fi
+
+          cmds=(
+            "set -euo pipefail"
+            "cd /opt/nexora/current"
+            "aws s3 cp --only-show-errors s3://${bucket}/releases/${RELEASE_TAG}-cd.tgz cd-patch.tgz --region ${AWS_REGION}"
+            "tar -xzf cd-patch.tgz && rm cd-patch.tgz"
+            "sed -i 's/^RELEASE_TAG=.*/RELEASE_TAG=${RELEASE_TAG}/' ./.env.aws"
+            "${deploy_steps[@]}"
+          )
+
+          params="$(python3 -c 'import json,sys; print(json.dumps({"commands": sys.argv[1:], "executionTimeout": ["600"]}))' "${cmds[@]}")"
+          cmd_id="$(aws ssm send-command --instance-ids "$instance_id" --document-name AWS-RunShellScript \
+            --timeout-seconds 600 --parameters "$params" --output text --query Command.CommandId)"
+
+          status="Pending"
+          for _ in $(seq 1 90); do
+            sleep 5
+            status="$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance_id" \
+              --query Status --output text 2>/dev/null || echo Pending)"
+            case "$status" in Pending|InProgress|Delayed) continue ;; *) break ;; esac
+          done
+
+          aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance_id" \
+            --query "[StandardOutputContent, StandardErrorContent]" --output text
+          [ "$status" = "Success" ]
+
+      - name: Verify live HTTPS health endpoint
+        run: |
+          set -euo pipefail
+          instance_id="$(aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)"
+          ip="$(aws ec2 describe-instances --instance-ids "$instance_id" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)"
+          url="https://${ip}.sslip.io/api/v1/healthz"
+          for i in $(seq 1 6); do
+            if curl -fsS -m 10 "$url"; then
+              echo ""
+              echo "### AWS Deploy Succeeded (\`${RELEASE_TAG}\`)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- Health: \`$url\` OK" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "ERROR: Live HTTPS health check failed at $url" >&2
+          exit 1

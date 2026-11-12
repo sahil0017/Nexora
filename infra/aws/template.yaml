@@ -56,10 +56,20 @@ Parameters:
     MinValue: 20
     MaxValue: 20
     Description: RDS storage in GB (20 GB is the free-tier max).
+  GitHubRepo:
+    Type: String
+    Default: ""
+    Description: "Optional GitHub owner/repo (e.g. sahil0017/Nexora) to provision an OIDC CD role for GitHub Actions."
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: "Optional existing GitHub OIDC provider ARN in this AWS account (leave empty to create one when GitHubRepo is set)."
 
 Conditions:
   HasAdminCidr: !Not [!Equals [!Ref AdminCidr, ""]]
   HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+  HasGitHubRepo: !Not [!Equals [!Ref GitHubRepo, ""]]
+  CreateGitHubOidcProvider: !And [!Condition HasGitHubRepo, !Equals [!Ref ExistingGitHubOidcProviderArn, ""]]
 
 Resources:
   # ------------------------------------------------------------------ network
@@ -344,6 +354,76 @@ Resources:
       InstanceProfileName: !Sub "nexora-${EnvironmentName}-instance-profile"
       Roles: [!Ref Ec2Role]
 
+  # --------------------------------------------------- GitHub Actions OIDC CD
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateGitHubOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Condition: HasGitHubRepo
+    Properties:
+      RoleName: !Sub "nexora-${EnvironmentName}-github-cd"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+                  - !Sub "repo:${GitHubRepo}:environment:*"
+      Policies:
+        - PolicyName: nexora-github-cd
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrPushPull
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/nexora/*"
+              - Sid: ArtifactsBucketAccess
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Sub "${ArtifactsBucket.Arn}/*"
+              - Sid: SsmDeploy
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:DescribeInstanceInformation
+                  - ec2:DescribeInstances
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackResources
+                Resource: "*"
+
   # ---------------------------------------------------------------- compute
   AppLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -429,3 +509,6 @@ Outputs:
     Value: !Sub "http://${Ec2Instance.PublicIp}:8080/api/v1/healthz"
   HttpsApiUrl:
     Value: !Sub "https://${Ec2Instance.PublicIp}.sslip.io/api/v1/healthz"
+  GitHubDeployRoleArn:
+    Condition: HasGitHubRepo
+    Value: !GetAtt GitHubDeployRole.Arn

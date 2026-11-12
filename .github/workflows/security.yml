@@ -1,0 +1,99 @@
+name: security
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'platform/api/go.mod'
+      - 'platform/api/go.sum'
+      - 'intelligence/ml-platform/pyproject.toml'
+      - 'apps/mobile/package-lock.json'
+      - 'infra/**'
+      - 'platform/api/Dockerfile'
+      - 'intelligence/ml-platform/Dockerfile'
+      - '.github/workflows/security.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'platform/api/go.mod'
+      - 'platform/api/go.sum'
+      - 'intelligence/ml-platform/pyproject.toml'
+      - 'apps/mobile/package-lock.json'
+      - 'infra/**'
+      - 'platform/api/Dockerfile'
+      - 'intelligence/ml-platform/Dockerfile'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  secret-scan:
+    name: Secret scanning (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for verified/accidental secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified --fail
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: platform/api/go.mod
+          cache-dependency-path: platform/api/go.sum
+
+      - name: Go vulnerability check (govulncheck)
+        working-directory: platform/api
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Mobile npm audit (high/critical)
+        working-directory: apps/mobile
+        run: npm audit --omit=dev --audit-level=high || true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python pip-audit
+        working-directory: intelligence/ml-platform
+        run: |
+          pip install -q pip-audit
+          pip install -q -e .
+          pip-audit --desc || true
+
+  iac-and-container-scan:
+    name: Trivy IaC & Dockerfile scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy misconfiguration scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'

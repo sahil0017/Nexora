@@ -1,0 +1,119 @@
+name: pr-automation
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-auto-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title follows Conventional Commits
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            perf
+            test
+            ci
+            build
+            revert
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            PR title subject "{subject}" should start with a lowercase letter (e.g. "feat(finance): add SIP ledger sync").
+
+  labeler:
+    name: Auto-label PR by area & size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          sync-labels: true
+
+      - name: Apply size label & sticky impact summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            const totalChanges = files.reduce((acc, f) => acc + f.changes, 0);
+            let sizeLabel = 'size/XS';
+            if (totalChanges > 1000) sizeLabel = 'size/XL';
+            else if (totalChanges > 400) sizeLabel = 'size/L';
+            else if (totalChanges > 150) sizeLabel = 'size/M';
+            else if (totalChanges > 40) sizeLabel = 'size/S';
+
+            const currentLabels = (context.payload.pull_request.labels || []).map(l => l.name);
+            for (const old of currentLabels.filter(l => l.startsWith('size/') && l !== sizeLabel)) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: old }).catch(() => {});
+            }
+            if (!currentLabels.includes(sizeLabel)) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: [sizeLabel] }).catch(() => {});
+            }
+
+            const names = files.map(f => f.filename);
+            const hasMigrations = names.some(f => f.startsWith('platform/api/migrations/'));
+            const hasContracts = names.some(f => f.startsWith('contracts/'));
+            const hasInfra = names.some(f => f.startsWith('infra/') || f === 'scripts/deploy-aws.sh');
+            const layers = [];
+            if (names.some(f => f.startsWith('platform/api/'))) layers.push('`platform/api` (Go)');
+            if (names.some(f => f.startsWith('intelligence/'))) layers.push('`intelligence/` (Python ML)');
+            if (names.some(f => f.startsWith('apps/mobile/'))) layers.push('`apps/mobile` (Expo/RN)');
+            if (hasContracts) layers.push('`contracts/` (OpenAPI/Events)');
+            if (hasInfra) layers.push('`infra/` / deploy scripts');
+            if (names.some(f => f.startsWith('docs/') || f.endsWith('.md'))) layers.push('`docs/`');
+
+            const marker = '<!-- nexora-pr-impact -->';
+            const lines = [
+              marker,
+              '### NEXORA PR Impact Summary',
+              `- **Size**: \`${sizeLabel}\` (${files.length} files, ${totalChanges} lines changed)`,
+              `- **Affected layers**: ${layers.length ? layers.join(', ') : 'repo config / other'}`,
+            ];
+            if (hasMigrations) {
+              lines.push('- **DB Migration Alert**: Ensure paired `.up.sql` & `.down.sql` scripts are idempotent for RDS PostgreSQL 16.');
+            }
+            if (hasContracts) {
+              lines.push('- **Contracts Changed**: Verify OpenAPI/event schema compatibility across Go API, ML consumer, and Mobile client.');
+            }
+            if (hasInfra) {
+              lines.push('- **AWS Infra/Deploy Touched**: Merging to `main` will trigger smart incremental AWS deployment (if OIDC is configured).');
+            }
+            const body = lines.join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pull_number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+            }

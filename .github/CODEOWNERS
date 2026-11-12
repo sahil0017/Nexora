@@ -1,0 +1,11 @@
+# Default owner across NEXORA monorepo
+* @sahil0017
+
+# Layer-specific ownership
+/platform/api/                  @sahil0017
+/intelligence/                  @sahil0017
+/apps/mobile/                   @sahil0017
+/contracts/                     @sahil0017
+/infra/                         @sahil0017
+/.github/                       @sahil0017
+/scripts/                       @sahil0017
