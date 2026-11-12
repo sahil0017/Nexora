@@ -486,6 +486,10 @@ export const voiceApi = {
     api.post<CallerDirectoryEntry>('/voice/caller/report-spam', body),
   syncCallerDirectory: () =>
     api.get<{ entries: CallerDirectoryEntry[]; count: number; mode: string }>('/voice/caller/directory-sync'),
+  syncDeviceContacts: (body: {
+    contacts: Array<{ phone_number: string; display_name: string; organization?: string }>;
+    source?: string;
+  }) => api.post<{ synced_count: number; entries: CallerDirectoryEntry[] }>('/voice/caller/sync-contacts', body),
   callerTimeline: (phoneNumber: string) =>
     api.get<CallerContextResponse>(`/voice/caller/timeline?phone_number=${encodeURIComponent(phoneNumber)}`),
   importCallLogs: (body: {

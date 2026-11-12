@@ -466,4 +466,25 @@ func TestDynamicHistoricCallLogsImportAndInsights(t *testing.T) {
 	if wIns.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK on GET /voice/caller/insights, got %d", wIns.Code)
 	}
+
+	// 3. Verify POST /voice/caller/sync-contacts and Postgres persistence normalization guard
+	wContacts := httptest.NewRecorder()
+	contactsBody := `{"source":"ios_contacts","contacts":[{"phone_number":"+919811112222","display_name":"Ananya Rao","organization":"Acme Labs"}]}`
+	r.ServeHTTP(wContacts, httptest.NewRequest(http.MethodPost, "/voice/caller/sync-contacts", bytes.NewBufferString(contactsBody)))
+	if wContacts.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on POST /voice/caller/sync-contacts, got %d: %s", wContacts.Code, wContacts.Body.String())
+	}
+	var cResp struct {
+		SyncedCount int `json:"synced_count"`
+	}
+	_ = json.Unmarshal(wContacts.Body.Bytes(), &cResp)
+	if cResp.SyncedCount != 1 {
+		t.Fatalf("expected 1 synced contact, got %+v", cResp)
+	}
+
+	var emptyIR ConversationIR
+	normalizeConversationIRForPersist(&emptyIR)
+	if emptyIR.DetectedLanguages == nil || len(emptyIR.DetectedLanguages) == 0 || emptyIR.Topics == nil || emptyIR.ConfidenceTier == "" || emptyIR.Recording.QualityReport.RoutingStrategy == "" {
+		t.Fatalf("normalizeConversationIRForPersist failed to initialize required non-null Postgres fields: %+v", emptyIR)
+	}
 }

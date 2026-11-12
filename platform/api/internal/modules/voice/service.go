@@ -96,6 +96,7 @@ func Mount(r chi.Router, svc *Service) {
 		v.Post("/caller/classify", svc.ClassifyUnknownCaller)
 		v.Post("/caller/report-spam", svc.ReportCallerSpam)
 		v.Get("/caller/directory-sync", svc.SyncCallerDirectory)
+		v.Post("/caller/sync-contacts", svc.SyncDeviceContacts)
 		v.Get("/caller/timeline", svc.GetCallerTimeline)
 		v.Post("/caller/import-logs", svc.ImportCallLogs)
 		v.Get("/caller/logs", svc.ListCallLogs)
@@ -688,6 +689,7 @@ func (s *Service) StartSession(w http.ResponseWriter, r *http.Request) {
 		SourceType:        src,
 		State:             "active",
 		LastChunkSeq:      -1,
+		ProcessedSeqs:     []int{},
 		OSCaptureGuidance: osCaptureGuidance(mode),
 		CreatedAt:         now,
 		UpdatedAt:         now,
@@ -701,12 +703,16 @@ func (s *Service) StartSession(w http.ResponseWriter, r *http.Request) {
 	// Ensure parent voice.conversations row exists BEFORE inserting voice.capture_sessions (FK constraint).
 	recID := uuid.NewSHA1(uuid.NameSpaceDNS, []byte("rec:"+sid)).String()
 	draftIR := ConversationIR{
-		ConversationID:  sid,
-		UserID:          userID,
-		Title:           title,
-		Summary:         "Live capture session active.",
-		Status:          "captured",
-		PrimaryLanguage: lang,
+		ConversationID:    sid,
+		UserID:            userID,
+		Title:             title,
+		Summary:           "Live capture session active.",
+		Status:            "captured",
+		PrimaryLanguage:   lang,
+		DetectedLanguages: []string{lang},
+		Topics:            []string{"live_call"},
+		OverallConfidence: 0.75,
+		ConfidenceTier:    "MEDIUM",
 		Recording: RecordingIR{
 			RecordingID:       recID,
 			SourceType:        src,
@@ -720,9 +726,16 @@ func (s *Service) StartSession(w http.ResponseWriter, r *http.Request) {
 			CallerSource:      callerEntry.Source,
 			CallerConfidence:  callerEntry.Confidence,
 			CallDirection:     defaultString(req.CallDirection, "inbound"),
+			QualityReport: AudioQualityReport{
+				RoutingStrategy: "direct_asr",
+				VadSegments:     []VadSegment{},
+			},
+			AudioMetadata: map[string]any{"capture_mode": mode},
 			Integrity: IntegrityMetadata{
-				ConsentGranted: true,
-				ConsentScope:   src,
+				SHA256Original:       ComputeSHA256([]byte("session:" + sid)),
+				EncryptionKeyVersion: 1,
+				ConsentGranted:       true,
+				ConsentScope:         src,
 			},
 		},
 		CreatedAt: now,
@@ -1126,6 +1139,61 @@ func (s *Service) SyncCallerDirectory(w http.ResponseWriter, r *http.Request) {
 		"entries": entries,
 		"count":   len(entries),
 		"mode":    "free_native_os_directory",
+	})
+}
+
+// SyncDeviceContacts imports consented device contacts into voice.caller_directory using SHA-256
+// phone hashing so raw phone numbers never leave the user's device unmasked.
+func (s *Service) SyncDeviceContacts(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID   string `json:"user_id"`
+		Source   string `json:"source"`
+		Contacts []struct {
+			PhoneNumber  string `json:"phone_number"`
+			DisplayName  string `json:"display_name"`
+			Organization string `json:"organization"`
+		} `json:"contacts"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4*1024*1024)).Decode(&req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_JSON", "invalid contacts sync payload", false)
+		return
+	}
+	userID := resolveUserID(r, req.UserID)
+	src := defaultString(req.Source, "device_contacts")
+	synced := make([]CallerDirectoryEntry, 0, len(req.Contacts))
+	for _, c := range req.Contacts {
+		if normalizePhone(c.PhoneNumber) == "" || strings.TrimSpace(c.DisplayName) == "" {
+			continue
+		}
+		pHash := HashPhoneNumber(c.PhoneNumber)
+		var existingPtr *CallerDirectoryEntry
+		if loaded, ok := s.repo.LookupCallerDirectory(r.Context(), userID, pHash); ok {
+			existingPtr = &loaded
+		}
+		merged := MergeCallerIntelligence(existingPtr, CallerDirectoryEntry{
+			UserID:            userID,
+			PhoneHash:         pHash,
+			PhoneMasked:       MaskPhoneNumber(c.PhoneNumber),
+			DisplayName:       strings.TrimSpace(c.DisplayName),
+			Organization:      strings.TrimSpace(c.Organization),
+			Source:            src,
+			Confidence:        0.92,
+			RelationshipLabel: "contact",
+			CallCount:         0,
+		})
+		merged.NeedsClassification = false
+		if err := s.repo.UpsertCallerDirectory(r.Context(), merged); err == nil {
+			synced = append(synced, merged)
+		}
+	}
+	s.invalidateAndBroadcast(r.Context(), userID, map[string]any{
+		"type":         "voice.caller.contacts_synced",
+		"synced_count": len(synced),
+		"source":       src,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"synced_count": len(synced),
+		"entries":      synced,
 	})
 }
 

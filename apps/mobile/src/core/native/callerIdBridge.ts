@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from 'react-native';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { API_BASE_URL } from '../config';
 
 type NativeCallerModule = {
@@ -7,6 +7,15 @@ type NativeCallerModule = {
   getExtensionStatus?: () => Promise<{ enabled?: boolean; status_code?: number }>;
   getPendingUnknownCaller?: () => Promise<string | null>;
   readDeviceCallLogs?: (limit: number) => Promise<DeviceCallLogRow[]>;
+  requestContactsAndRead?: () => Promise<{
+    granted?: boolean;
+    status?: string;
+    contacts?: Array<{ phone_number: string; display_name: string; organization?: string }>;
+    count?: number;
+    error?: string;
+  }>;
+  startCallObserver?: () => Promise<{ observing?: boolean }>;
+  stopCallObserver?: () => Promise<{ observing?: boolean }>;
 };
 
 export type DeviceCallLogRow = {
@@ -146,7 +155,59 @@ export async function fetchDeviceCallLogs(limit = 200): Promise<{
     logs: [],
     note:
       Platform.OS === 'ios'
-        ? 'Apple iOS blocks third-party apps from querying CallLog history. Export or paste call logs CSV/JSON above to import.'
-        : 'Expo Go cannot read Android READ_CALL_LOG natively (custom EAS Dev/Prod Android build required). Paste CSV/JSON or pick a call log file above to import now.',
+        ? 'Apple iOS blocks direct OS reading of historic Call History (Recents). Use Sync iOS Contacts + CallKit Observer for live calls & caller ID, or paste CSV/JSON above for past logs.'
+        : 'Expo Go cannot read Android READ_CALL_LOG natively (custom EAS Dev/Prod Android build required). Install the Android preview APK or paste CSV/JSON above.',
+  };
+}
+
+export async function syncIosContactsWithConsent(): Promise<{
+  supported: boolean;
+  granted: boolean;
+  contacts: Array<{ phone_number: string; display_name: string; organization?: string }>;
+  note: string;
+}> {
+  if (Platform.OS !== 'ios' || !nativeModule?.requestContactsAndRead) {
+    return {
+      supported: Platform.OS === 'ios',
+      granted: false,
+      contacts: [],
+      note:
+        Platform.OS === 'ios'
+          ? 'Custom EAS iOS native build required for CNContactStore permission prompt.'
+          : 'iOS Contacts sync runs on iOS devices; Android uses READ_CALL_LOG & READ_CONTACTS.',
+    };
+  }
+  const res = await nativeModule.requestContactsAndRead();
+  if (!res?.granted) {
+    return {
+      supported: true,
+      granted: false,
+      contacts: [],
+      note: res?.error || 'iOS Contacts permission was denied in Settings.',
+    };
+  }
+  const contacts = Array.isArray(res.contacts) ? res.contacts : [];
+  return {
+    supported: true,
+    granted: true,
+    contacts,
+    note: `Synced ${contacts.length} iOS contact(s) into Nexora Caller Directory & CallKit.`,
+  };
+}
+
+export function subscribeIosCallObserver(onObservedCall: (log: DeviceCallLogRow) => void): () => void {
+  if (Platform.OS !== 'ios' || !nativeModule?.startCallObserver) {
+    return () => {};
+  }
+  const emitter = new NativeEventEmitter(nativeModule as any);
+  const sub = emitter.addListener('onIosCallObserved', (evt: any) => {
+    if (evt) {
+      onObservedCall(evt as DeviceCallLogRow);
+    }
+  });
+  void nativeModule.startCallObserver().catch(() => {});
+  return () => {
+    sub.remove();
+    void nativeModule?.stopCallObserver?.().catch(() => {});
   };
 }

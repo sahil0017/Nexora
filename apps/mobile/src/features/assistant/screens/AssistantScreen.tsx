@@ -23,6 +23,7 @@ import {
   platformApi,
 } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
+import { voiceApi } from '../../../core/api/voice';
 import { useLocation } from '../../../core/location/useLocation';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
@@ -37,17 +38,19 @@ type Msg = {
   intent?: string;
   actions?: string[];
   financeDomain?: boolean;
+  voiceDomain?: boolean;
   context?: ContextChunk[];
   explainability?: RouteExplainability;
   error?: boolean;
 };
 
-type DomainKey = 'all' | 'move' | 'finance' | 'health' | 'work';
+type DomainKey = 'all' | 'move' | 'finance' | 'voice' | 'health' | 'work';
 
 const DOMAINS: ReadonlyArray<{ key: DomainKey; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'move', label: 'Move' },
   { key: 'finance', label: 'Wealth' },
+  { key: 'voice', label: 'Voice' },
   { key: 'health', label: 'Health' },
   { key: 'work', label: 'Work' },
 ];
@@ -58,17 +61,26 @@ type StarterPrompt = {
   title: string;
   subtitle: string;
   query: string;
-  liveHint?: 'move' | 'finance';
+  liveHint?: 'move' | 'finance' | 'voice';
 };
 
 const DOMAIN_LABEL: Record<Exclude<DomainKey, 'all'>, string> = {
   move: 'Move',
   finance: 'Wealth',
+  voice: 'Voice',
   health: 'Health',
   work: 'Work',
 };
 
 const STARTER_PROMPTS: StarterPrompt[] = [
+  {
+    id: 'voice-call-qa',
+    domain: 'voice',
+    title: 'Commitments & call memory QA',
+    subtitle: 'Search decisions, commitments & speakers with citations',
+    query: 'What commitments, decisions, or follow-ups are open across my recent conversations and calls?',
+    liveHint: 'voice',
+  },
   {
     id: 'fin-tax-cash',
     domain: 'finance',
@@ -127,6 +139,14 @@ const STARTER_PROMPTS: StarterPrompt[] = [
     subtitle: 'Align deep work around lowest-traffic hours',
     query: 'Help me schedule deep work blocks and the lowest-traffic commute window.',
   },
+  {
+    id: 'voice-spam-followup',
+    domain: 'voice',
+    title: 'Call logs & spam insights',
+    subtitle: 'Review missed calls, repeat handles & spam risk patterns',
+    query: 'Summarize my call logs, missed repeat callers, and spam risks.',
+    liveHint: 'voice',
+  },
 ];
 
 const QUICK_LANGUAGES = [
@@ -151,6 +171,14 @@ function buildFollowUpSuggestions(
   }
 
   const text = `${lastAssistant?.intent ?? ''} ${lastAssistant?.text ?? ''}`.toLowerCase();
+  if (lastAssistant?.voiceDomain || domain === 'voice') {
+    return [
+      { label: 'Open commitments', query: 'List open commitments and decisions across my calls.' },
+      { label: 'Missed & follow-up calls', query: 'Summarize missed calls, repeat callers, and spam risks.' },
+      { label: 'Search call memory', query: 'What key topics came up in my recent conversations?' },
+    ];
+  }
+
   if (lastAssistant?.financeDomain || domain === 'finance') {
     if (text.includes('tax') || text.includes('regime') || text.includes('80c')) {
       return [
@@ -214,9 +242,22 @@ const FINANCE_KEYWORDS = [
   'cash', 'runway', 'invest', 'debt', 'lrs', 'fd', 'gst', 'rupee', '₹', 'inr', 'wealth',
 ];
 
+const VOICE_KEYWORDS = [
+  'call', 'calls', 'caller', 'call log', 'call logs', 'voicemail', 'transcript',
+  'conversation', 'commitment', 'commitments', 'speaker', 'recording', 'meeting',
+  'follow-up', 'followup', 'spam', 'evidence', 'custody',
+];
+
+function isVoicePrompt(text: string, activeDomain: DomainKey): boolean {
+  if (activeDomain === 'voice') return true;
+  if (activeDomain === 'finance' || activeDomain === 'move') return false;
+  const lower = text.toLowerCase();
+  return VOICE_KEYWORDS.some(k => lower.includes(k));
+}
+
 function isFinancePrompt(text: string, activeDomain: DomainKey): boolean {
   if (activeDomain === 'finance') return true;
-  if (activeDomain === 'move') return false;
+  if (activeDomain === 'move' || activeDomain === 'voice') return false;
   const lower = text.toLowerCase();
   return FINANCE_KEYWORDS.some(k => lower.includes(k));
 }
@@ -261,20 +302,44 @@ export default function AssistantScreen() {
     retry: 0,
   });
 
+  const voiceOverview = useQuery({
+    queryKey: ['copilot-voice-overview'],
+    queryFn: voiceApi.overview,
+    retry: 0,
+  });
+
+  const voiceInsights = useQuery({
+    queryKey: ['copilot-voice-insights'],
+    queryFn: voiceApi.callLogInsights,
+    retry: 0,
+  });
+
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   const ask = useMutation({
     mutationFn: async (vars: { raw: string; routeContext?: RouteContextPayload }) => {
-      const useFinanceBrain = isFinancePrompt(vars.raw, domain);
+      const useVoiceBrain = isVoicePrompt(vars.raw, domain);
+      const useFinanceBrain = !useVoiceBrain && isFinancePrompt(vars.raw, domain);
       const prefix = domain !== 'all' ? `[Focus: ${domain}] ` : '';
       const gpsSuffix =
-        !useFinanceBrain && attachGps && loc.point
+        !useFinanceBrain && !useVoiceBrain && attachGps && loc.point
           ? ` (Near ${loc.point.latitude.toFixed(4)}, ${loc.point.longitude.toFixed(4)})`
           : '';
       const enriched = `${prefix}${vars.raw}${gpsSuffix}`;
 
       if (conversationId) {
         platformApi.sendConversationMessage(conversationId, enriched).catch(() => undefined);
+      }
+
+      if (useVoiceBrain) {
+        if (!usePrivacyPermissions.getState().permissions.voiceConversationMemory) {
+          throw new Error('Conversational Memory & Graph is turned off in Privacy & Access');
+        }
+        const [qa, ins] = await Promise.all([
+          voiceApi.askQA(vars.raw),
+          voiceApi.callLogInsights().catch(() => voiceInsights.data),
+        ]);
+        return { kind: 'voice' as const, qa, insights: ins };
       }
 
       if (useFinanceBrain) {
@@ -293,6 +358,36 @@ export default function AssistantScreen() {
       return { kind: 'mobility' as const, mob };
     },
     onSuccess: res => {
+      if (res.kind === 'voice') {
+        const { qa, insights } = res;
+        const alertLines =
+          insights?.follow_up_alerts?.map(
+            a => `${a.title} (${a.phone_masked}) — ${a.recommendation}`,
+          ) ?? [];
+        const insSummary =
+          insights && insights.total_calls > 0
+            ? `\n\nCall Insights: ${insights.total_calls} call(s) logged · ${insights.missed_count} missed · ${insights.high_risk_spam_count} high-risk spam · ${Math.round(insights.total_talk_duration_sec / 60)}m talk time.`
+            : '';
+        setMessages(m => [
+          ...m,
+          {
+            id: nextId++,
+            from: 'assistant',
+            text: `${qa.answer}${insSummary}`,
+            meta: `Voice Intelligence · ${qa.confidence_tier} (${Math.round(qa.confidence * 100)}%) · ${qa.citations.length} citation(s)`,
+            actions: alertLines.length > 0 ? alertLines : undefined,
+            context: qa.citations.map(c => ({
+              id: c.utterance_id,
+              title: `${c.conversation_title} · ${c.speaker_label}`,
+              content: c.quote,
+              relevance_score: c.score,
+            })),
+            voiceDomain: true,
+          },
+        ]);
+        return;
+      }
+
       if (res.kind === 'finance') {
         const { cfo } = res;
         const privacyLabel = cfo.evidence_bundle?.privacy_firewall?.pii_scrubbed
@@ -416,12 +511,12 @@ export default function AssistantScreen() {
           </View>
 
           {/* Compact horizontal live context strip */}
-          {(brief.data || finTwin.data) && (
+          {(brief.data || finTwin.data || voiceOverview.data) && (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.contextStrip}>
-              {domain !== 'finance' && brief.data ? (
+              {domain !== 'finance' && domain !== 'voice' && brief.data ? (
                 <TouchableOpacity
                   onPress={() => submit(`Explain corridor status: ${brief.data.headline}`)}
                   style={[styles.contextChip, styles.contextChipMove]}>
@@ -431,7 +526,7 @@ export default function AssistantScreen() {
                   </Text>
                 </TouchableOpacity>
               ) : null}
-              {domain !== 'move' && finTwin.data ? (
+              {domain !== 'move' && domain !== 'voice' && finTwin.data ? (
                 <TouchableOpacity
                   onPress={() => submit('Audit my net worth, safe to spend & top tax/investment actions right now.')}
                   style={[styles.contextChip, styles.contextChipFinance]}>
@@ -441,6 +536,18 @@ export default function AssistantScreen() {
                     {finRadar.data && finRadar.data.total_annualized_savings_inr > 0
                       ? ` · Save ${formatINR(finRadar.data.total_annualized_savings_inr)}/yr`
                       : ''}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              {domain !== 'move' && domain !== 'finance' && voiceOverview.data ? (
+                <TouchableOpacity
+                  onPress={() =>
+                    submit('What commitments, decisions, or call follow-ups are open across my conversations?')
+                  }
+                  style={[styles.contextChip, styles.contextChipVoice]}>
+                  <View style={[styles.dot, { backgroundColor: moduleColors.voice }]} />
+                  <Text style={[styles.contextChipText, { color: moduleColors.voice }]} numberOfLines={1}>
+                    Voice: {voiceOverview.data.conversation_count} convs · {voiceInsights.data?.total_calls ?? 0} calls
                   </Text>
                 </TouchableOpacity>
               ) : null}
@@ -492,6 +599,8 @@ export default function AssistantScreen() {
                       ? `Save ${formatINR(finRadar.data.total_annualized_savings_inr)}/yr`
                       : item.liveHint === 'move' && brief.data
                       ? 'Live corridor'
+                      : item.liveHint === 'voice' && voiceOverview.data
+                      ? `${voiceOverview.data.conversation_count} convs · ${voiceInsights.data?.total_calls ?? 0} calls`
                       : null;
 
                   return (
@@ -566,6 +675,7 @@ export default function AssistantScreen() {
                 m.from === 'assistant' &&
                 !m.error &&
                 !m.financeDomain &&
+                !m.voiceDomain &&
                 (m.intent?.includes('route') ||
                   m.intent?.includes('traffic') ||
                   m.intent?.includes('hazard') ||
@@ -578,8 +688,13 @@ export default function AssistantScreen() {
                   style={[styles.bubble, m.from === 'user' ? styles.userBubble : styles.assistantBubble]}>
                   {m.from === 'assistant' && (
                     <View style={styles.assistantTagRow}>
-                      <Text style={[styles.assistantTag, m.financeDomain && { color: moduleColors.finance }]}>
-                        ✦ {m.financeDomain ? 'Wealth Advisor' : 'Copilot'}
+                      <Text
+                        style={[
+                          styles.assistantTag,
+                          m.financeDomain && { color: moduleColors.finance },
+                          m.voiceDomain && { color: moduleColors.voice },
+                        ]}>
+                        ✦ {m.voiceDomain ? 'Voice Intelligence' : m.financeDomain ? 'Wealth Advisor' : 'Copilot'}
                       </Text>
                     </View>
                   )}
@@ -655,6 +770,27 @@ export default function AssistantScreen() {
                           • {act}
                         </Text>
                       ))}
+                    </View>
+                  )}
+
+                  {m.voiceDomain && (
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity
+                        onPress={() => nav.navigate('Voice', { screen: 'VoiceCapture' })}
+                        style={[
+                          styles.deepLinkBtn,
+                          { backgroundColor: 'rgba(167, 139, 250, 0.14)', borderColor: moduleColors.voice },
+                        ]}>
+                        <Text style={[styles.deepLinkText, { color: moduleColors.voice }]}>Voice Hub →</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => nav.navigate('Voice', { screen: 'VoiceMemory' })}
+                        style={[
+                          styles.deepLinkBtn,
+                          { backgroundColor: 'rgba(167, 139, 250, 0.08)', borderColor: 'rgba(167, 139, 250, 0.35)' },
+                        ]}>
+                        <Text style={[styles.deepLinkText, { color: moduleColors.voice }]}>Memory & QA →</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
 
@@ -743,6 +879,8 @@ export default function AssistantScreen() {
             placeholder={
               domain === 'finance'
                 ? 'Ask about taxes, SIPs, loans, cashflow…'
+                : domain === 'voice'
+                ? 'Ask about calls, commitments, callers, transcripts…'
                 : domain === 'move'
                 ? 'Ask about routes, traffic, road alerts…'
                 : 'Message NEXORA Copilot…'
@@ -813,6 +951,10 @@ const styles = StyleSheet.create({
   contextChipFinance: {
     backgroundColor: 'rgba(163, 230, 53, 0.10)',
     borderColor: 'rgba(163, 230, 53, 0.28)',
+  },
+  contextChipVoice: {
+    backgroundColor: 'rgba(167, 139, 250, 0.12)',
+    borderColor: 'rgba(167, 139, 250, 0.32)',
   },
   contextChipText: { fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '600', flexShrink: 1 },
   scrollBody: { padding: spacing.m, gap: spacing.s },

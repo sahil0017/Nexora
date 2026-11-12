@@ -298,14 +298,25 @@ func (s *Service) ImportCallLogs(w http.ResponseWriter, r *http.Request) {
 	linkedConvs := 0
 
 	for _, item := range rawItems {
-		if normalizePhone(item.PhoneNumber) == "" {
+		normPhone := normalizePhone(item.PhoneNumber)
+		itemSrc := defaultString(item.Source, srcDefault)
+		var pHash, pMasked string
+		if normPhone != "" {
+			pHash = HashPhoneNumber(item.PhoneNumber)
+			pMasked = MaskPhoneNumber(item.PhoneNumber)
+		} else if itemSrc == "ios_call_observer" && strings.TrimSpace(item.DeviceCallID) != "" {
+			cleanID := strings.TrimSpace(item.DeviceCallID)
+			pHash = ComputeSHA256([]byte("nexora.ios_call:" + cleanID))
+			shortID := cleanID
+			if len(shortID) > 6 {
+				shortID = shortID[:6]
+			}
+			pMasked = "iOS Call #" + shortID
+		} else {
 			continue
 		}
-		pHash := HashPhoneNumber(item.PhoneNumber)
-		pMasked := MaskPhoneNumber(item.PhoneNumber)
 		dir := normalizeCallDirection(item.Direction)
 		startedAt := parseFlexibleTimestamp(item.StartedAt)
-		itemSrc := defaultString(item.Source, srcDefault)
 
 		var existingPtr *CallerDirectoryEntry
 		if cached, ok := dirAgg[pHash]; ok {

@@ -811,7 +811,60 @@ func (p *PostgresRepository) loadConversationsBatch(ctx context.Context, userID 
 	return out, nil
 }
 
+func nonNilStrings(in []string, fallback ...string) []string {
+	if len(in) > 0 {
+		return in
+	}
+	if len(fallback) > 0 {
+		return append([]string{}, fallback...)
+	}
+	return []string{}
+}
+
+func nonNilInts(in []int) []int {
+	if in == nil {
+		return []int{}
+	}
+	return in
+}
+
+func marshalNonNullJSON(v any, emptyLiteral string) string {
+	b, err := json.Marshal(v)
+	if err != nil || len(b) == 0 || string(b) == "null" {
+		return emptyLiteral
+	}
+	return string(b)
+}
+
+func normalizeConversationIRForPersist(ir *ConversationIR) {
+	ir.PrimaryLanguage = defaultString(ir.PrimaryLanguage, "en")
+	ir.DetectedLanguages = nonNilStrings(ir.DetectedLanguages, ir.PrimaryLanguage)
+	ir.Topics = nonNilStrings(ir.Topics)
+	ir.Status = defaultString(ir.Status, "captured")
+	switch ir.ConfidenceTier {
+	case "HIGH", "MEDIUM", "LOW", "INSUFFICIENT_DATA":
+	default:
+		ir.ConfidenceTier = "MEDIUM"
+	}
+	if ir.Recording.QualityReport.RoutingStrategy == "" {
+		ir.Recording.QualityReport.RoutingStrategy = "direct_asr"
+	}
+	if ir.Recording.Integrity.SHA256Original == "" {
+		ir.Recording.Integrity.SHA256Original = ComputeSHA256([]byte("rec:" + ir.Recording.RecordingID + ":" + ir.ConversationID))
+	}
+	if ir.Recording.QualityReport.VadSegments == nil {
+		ir.Recording.QualityReport.VadSegments = []VadSegment{}
+	}
+	if ir.Recording.AudioMetadata == nil {
+		ir.Recording.AudioMetadata = map[string]any{}
+	}
+	if ir.SourceEvidenceRefs == nil {
+		ir.SourceEvidenceRefs = []SourceEvidenceRef{}
+	}
+}
+
 func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir ConversationIR, vault *VoiceVault, actionEvent string) (ConversationIR, error) {
+	normalizeConversationIRForPersist(&ir)
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return ConversationIR{}, err
@@ -826,6 +879,7 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 		 ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (id) DO UPDATE SET
 		   title = EXCLUDED.title, summary = EXCLUDED.summary, status = EXCLUDED.status,
+		   detected_languages = EXCLUDED.detected_languages,
 		   topics = EXCLUDED.topics, overall_confidence = EXCLUDED.overall_confidence,
 		   confidence_tier = EXCLUDED.confidence_tier`,
 		ir.ConversationID, ir.UserID, ir.Title, ir.Summary, ir.Status, ir.PrimaryLanguage,
@@ -835,9 +889,9 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 		return ConversationIR{}, fmt.Errorf("save voice conversation: %w", err)
 	}
 
-	vadJSON, _ := json.Marshal(ir.Recording.QualityReport.VadSegments)
-	qrJSON, _ := json.Marshal(ir.Recording.QualityReport)
-	amJSON, _ := json.Marshal(ir.Recording.AudioMetadata)
+	vadJSON := marshalNonNullJSON(ir.Recording.QualityReport.VadSegments, "[]")
+	qrJSON := marshalNonNullJSON(ir.Recording.QualityReport, "{}")
+	amJSON := marshalNonNullJSON(ir.Recording.AudioMetadata, "{}")
 	s3Status := ir.Recording.S3PresignedStatus
 	if s3Status == "" {
 		s3Status = "pending"
@@ -909,7 +963,7 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 		if eType == "" {
 			eType = "topic"
 		}
-		attrJSON, _ := json.Marshal(ent.Attributes)
+		attrJSON := marshalNonNullJSON(ent.Attributes, "{}")
 		var canonicalID string
 		qErr := tx.QueryRow(ctx,
 			`INSERT INTO voice.knowledge_entities (id, user_id, conversation_id, canonical_name, entity_type, aliases, attributes, embedding)
@@ -921,7 +975,7 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 			   embedding = CASE WHEN COALESCE(array_length(EXCLUDED.embedding, 1), 0) > 0 THEN EXCLUDED.embedding ELSE voice.knowledge_entities.embedding END,
 			   last_seen_at = now()
 			 RETURNING id::text`,
-			eid, ir.UserID, ir.ConversationID, ent.CanonicalName, eType, ent.Aliases, string(attrJSON), ent.Embedding,
+			eid, ir.UserID, ir.ConversationID, ent.CanonicalName, eType, nonNilStrings(ent.Aliases), attrJSON, ent.Embedding,
 		).Scan(&canonicalID)
 		if qErr != nil {
 			return ConversationIR{}, fmt.Errorf("save voice knowledge entity: %w", qErr)
@@ -976,7 +1030,7 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 	}
 
 	for _, u := range ir.Utterances {
-		wtJSON, _ := json.Marshal(u.WordTimestamps)
+		wtJSON := marshalNonNullJSON(u.WordTimestamps, "[]")
 		var addrPtr, partPtr *string
 		if u.AddressedUtteranceID != "" {
 			addrPtr = &u.AddressedUtteranceID
@@ -994,8 +1048,8 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 			   addressed_utterance_id = EXCLUDED.addressed_utterance_id,
 			   what_is_spoken = EXCLUDED.what_is_spoken`,
 			u.UtteranceID, ir.ConversationID, ir.Recording.RecordingID, partPtr, u.SpeakerLabel, u.SeqIndex, u.StartMS, u.EndMS,
-			u.OriginalText, string(wtJSON), u.Language, u.Confidence, u.UncertaintyReason, u.OverlapDetected, u.AudioSegmentRef,
-			u.ToSpeakers, u.AddressingMode, addrPtr, u.WhatIsSpoken,
+			u.OriginalText, wtJSON, defaultString(u.Language, "en"), u.Confidence, u.UncertaintyReason, u.OverlapDetected, u.AudioSegmentRef,
+			nonNilStrings(u.ToSpeakers), defaultString(u.AddressingMode, "group_broadcast"), addrPtr, u.WhatIsSpoken,
 		)
 	}
 
@@ -1009,7 +1063,7 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 		batch.Queue(
 			`INSERT INTO voice.conversation_events (id, conversation_id, event_type, summary, actor_speaker, topic, dialogue_act, intent, due_at, confidence, source_utterance_ids, status)
 			 VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid[],$12) ON CONFLICT (id) DO NOTHING`,
-			ev.EventID, ir.ConversationID, ev.EventType, ev.Summary, ev.ActorSpeaker, ev.Topic, ev.DialogueAct, ev.Intent, duePtr, ev.Confidence, ev.SourceUtteranceIDs, ev.Status,
+			ev.EventID, ir.ConversationID, ev.EventType, ev.Summary, ev.ActorSpeaker, ev.Topic, ev.DialogueAct, ev.Intent, duePtr, ev.Confidence, nonNilStrings(ev.SourceUtteranceIDs), defaultString(ev.Status, "open"),
 		)
 	}
 
@@ -1017,7 +1071,7 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 		batch.Queue(
 			`INSERT INTO voice.reasoning_findings (id, conversation_id, finding_type, severity, title, explanation, evidence_utterance_ids, confidence)
 			 VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7::uuid[],$8) ON CONFLICT (id) DO NOTHING`,
-			f.FindingID, ir.ConversationID, f.FindingType, f.Severity, f.Title, f.Explanation, f.EvidenceUtteranceIDs, f.Confidence,
+			f.FindingID, ir.ConversationID, f.FindingType, defaultString(f.Severity, "medium"), f.Title, f.Explanation, nonNilStrings(f.EvidenceUtteranceIDs), f.Confidence,
 		)
 	}
 
@@ -1043,30 +1097,30 @@ func (p *PostgresRepository) SaveConversationIR(ctx context.Context, ir Conversa
 	}
 
 	for _, a := range ir.ActionSuggestions {
-		payloadJSON, _ := json.Marshal(a.Payload)
-		refsJSON, _ := json.Marshal(a.EvidenceRefs)
+		payloadJSON := marshalNonNullJSON(a.Payload, "{}")
+		refsJSON := marshalNonNullJSON(a.EvidenceRefs, "[]")
 		batch.Queue(
 			`INSERT INTO voice.action_suggestions (id, user_id, conversation_id, action_type, title, rationale, payload, confidence, evidence_refs, status)
 			 VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10) ON CONFLICT (id) DO NOTHING`,
-			a.ActionID, ir.UserID, ir.ConversationID, a.ActionType, a.Title, a.Rationale, string(payloadJSON), a.Confidence, string(refsJSON), a.Status,
+			a.ActionID, ir.UserID, ir.ConversationID, a.ActionType, a.Title, a.Rationale, payloadJSON, a.Confidence, refsJSON, defaultString(a.Status, "pending_approval"),
 		)
 	}
 
 	if ir.Evidence != nil {
-		refsJSON, _ := json.Marshal(ir.SourceEvidenceRefs)
+		refsJSON := marshalNonNullJSON(ir.SourceEvidenceRefs, "[]")
 		batch.Queue(
 			`INSERT INTO voice.evidence_records (id, user_id, conversation_id, recording_id, merkle_root, chain_head_hash, source_refs)
 			 VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7::jsonb)
 			 ON CONFLICT (conversation_id) DO UPDATE SET merkle_root = EXCLUDED.merkle_root, chain_head_hash = EXCLUDED.chain_head_hash, source_refs = EXCLUDED.source_refs`,
 			ir.Evidence.EvidenceID, ir.UserID, ir.ConversationID, ir.Recording.RecordingID,
-			ir.Evidence.MerkleRoot, ir.Evidence.ChainHeadHash, string(refsJSON),
+			ir.Evidence.MerkleRoot, ir.Evidence.ChainHeadHash, refsJSON,
 		)
 		for _, ce := range ir.Evidence.CustodyEvents {
-			detJSON, _ := json.Marshal(ce.Details)
+			detJSON := marshalNonNullJSON(ce.Details, "{}")
 			batch.Queue(
 				`INSERT INTO voice.custody_events (id, evidence_id, conversation_id, actor_id, event_action, prev_hash, event_hash, details)
 				 VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8::jsonb) ON CONFLICT (id) DO NOTHING`,
-				ce.ID, ce.EvidenceID, ce.ConversationID, ce.ActorID, ce.EventAction, ce.PrevHash, ce.EventHash, string(detJSON),
+				ce.ID, ce.EvidenceID, ce.ConversationID, ce.ActorID, ce.EventAction, ce.PrevHash, ce.EventHash, detJSON,
 			)
 		}
 	}
@@ -1425,7 +1479,7 @@ func (p *PostgresRepository) SaveCaptureSession(ctx context.Context, sess *Captu
 		   processed_seqs = EXCLUDED.processed_seqs,
 		   updated_at = now()`,
 		sess.SessionID, sess.UserID, sess.ConversationID, sess.Title, sess.CaptureMode, sess.SourceType,
-		sess.State, sess.ChunkCount, sess.LastChunkSeq, sess.ProcessedSeqs, sess.OSCaptureGuidance,
+		sess.State, sess.ChunkCount, sess.LastChunkSeq, nonNilInts(sess.ProcessedSeqs), sess.OSCaptureGuidance,
 	)
 	return err
 }

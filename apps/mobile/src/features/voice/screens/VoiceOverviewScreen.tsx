@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
@@ -10,6 +10,8 @@ import {
   putAudioToPresignedUrl,
   requestAndroidScreeningRole,
   resolveVoiceStorageUrl,
+  subscribeIosCallObserver,
+  syncIosContactsWithConsent,
   syncOsCallerDirectory,
 } from '../../../core/native/callerIdBridge';
 import { Card, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
@@ -74,6 +76,44 @@ export default function VoiceOverviewScreen() {
   const callLogsQuery = useQuery({
     queryKey: ['voice-call-logs'],
     queryFn: () => voiceApi.callLogs(100),
+  });
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !permissions.deviceCallScreening) {
+      return undefined;
+    }
+    return subscribeIosCallObserver(observed => {
+      void voiceApi
+        .importCallLogs({ source: 'ios_call_observer', logs: [observed] })
+        .then(async res => {
+          setCallLogsNotice(
+            `CallKit observed ${observed.direction} call (${observed.duration_sec}s) · ${res.insights.total_calls} total logs.`,
+          );
+          await callLogsQuery.refetch();
+          await refresh();
+        })
+        .catch(() => {});
+    });
+  }, [permissions.deviceCallScreening]);
+
+  const syncContactsMut = useMutation({
+    mutationFn: async () => {
+      const res = await syncIosContactsWithConsent();
+      if (!res.supported || !res.granted) {
+        throw new Error(res.note);
+      }
+      if (res.contacts.length === 0) {
+        return { synced_count: 0 };
+      }
+      const uploaded = await voiceApi.syncDeviceContacts({ source: 'ios_contacts', contacts: res.contacts });
+      await syncOsCallerDirectory(uploaded.entries);
+      return uploaded;
+    },
+    onSuccess: async res => {
+      setCallLogsNotice(`Synced ${res.synced_count} iOS Contact(s) into Nexora Caller Intelligence & CallDirectory.`);
+      await refresh();
+    },
+    onError: (err: any) => setCallLogsNotice(err?.message ?? 'Contacts sync failed'),
   });
 
   const importCallLogsMut = useMutation({
@@ -762,10 +802,12 @@ export default function VoiceOverviewScreen() {
                 />
               </View>
               <PrimaryButton
-                title="Sync Device CallLog"
+                title={Platform.OS === 'ios' ? 'Sync iOS Contacts' : 'Sync Device CallLog'}
                 variant="secondary"
-                loading={importCallLogsMut.isPending}
-                onPress={() => importCallLogsMut.mutate('device')}
+                loading={importCallLogsMut.isPending || syncContactsMut.isPending}
+                onPress={() =>
+                  Platform.OS === 'ios' ? syncContactsMut.mutate() : importCallLogsMut.mutate('device')
+                }
               />
             </View>
             {(!permissions.deviceCallLogsRead || !permissions.deviceCallScreening) && (

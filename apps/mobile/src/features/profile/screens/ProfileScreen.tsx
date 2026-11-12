@@ -9,6 +9,7 @@ import { FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-sys
 import { colors, fontFamily, moduleColors, spacing } from '../../../app/theme/tokens';
 import { modeLabel, platformApi } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
+import { voiceApi } from '../../../core/api/voice';
 import { getAuthToken, setAuthToken } from '../../../core/api/client';
 import { useMe } from '../../../core/auth/useMe';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
@@ -67,6 +68,18 @@ export default function ProfileScreen() {
   const finChannels = useQuery({
     queryKey: ['profile-finance-channels'],
     queryFn: financeApi.channels,
+    retry: 0,
+  });
+
+  const voiceOverview = useQuery({
+    queryKey: ['profile-voice-overview'],
+    queryFn: voiceApi.overview,
+    retry: 0,
+  });
+
+  const voiceInsights = useQuery({
+    queryKey: ['profile-voice-insights'],
+    queryFn: voiceApi.callLogInsights,
     retry: 0,
   });
 
@@ -199,6 +212,25 @@ export default function ProfileScreen() {
 
           <View style={styles.divider} />
 
+          <Tappable
+            onPress={() => nav.navigate('Voice')}
+            style={styles.moduleRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.rowInline}>
+                <Text style={styles.rowTitle}>Voice Intelligence & Caller ID</Text>
+                <StatusPill label="LIVE" tone="success" />
+              </View>
+              <Text style={styles.sub}>
+                {voiceOverview.data
+                  ? `${voiceOverview.data.conversation_count} convs · ${voiceOverview.data.pending_approvals} pending approvals · ${voiceInsights.data?.total_calls ?? 0} call logs`
+                  : '10-workstream speaker IR, call logs & cryptographic custody'}
+              </Text>
+            </View>
+            <Text style={[styles.chevron, { color: moduleColors.voice }]}>Open ›</Text>
+          </Tappable>
+
+          <View style={styles.divider} />
+
           <View style={styles.upcomingGrid}>
             {UPCOMING_MODULES.map(m => (
               <Tappable
@@ -220,6 +252,8 @@ export default function ProfileScreen() {
         onActionPress={() => {
           health.refetch();
           finTwin.refetch();
+          voiceOverview.refetch();
+          voiceInsights.refetch();
         }}
       />
       <FadeIn index={2}>
@@ -228,7 +262,7 @@ export default function ProfileScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Privacy & Data Access Permissions</Text>
               <Text style={styles.sub}>
-                Control GPS, Bank/UPI Alerts, Statement Email, Clipboard & Advisor ({activePermsCount}/{totalPermsCount} active)
+                Control GPS, Bank/UPI Alerts, Voice, CallLogs & Screening ({activePermsCount}/{totalPermsCount} active)
               </Text>
             </View>
             <StatusPill

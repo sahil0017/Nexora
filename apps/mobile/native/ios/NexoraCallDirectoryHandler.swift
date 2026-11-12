@@ -6,7 +6,7 @@ import CallKit
 /// App Group (`group.com.nexora.voice.callerid`) by Nexora's React Native bridge
 /// and supplies system lock-screen Caller ID without external paid APIs.
 final class NexoraCallDirectoryHandler: CXCallDirectoryProvider {
-    static let appGroupId = "group.com.nexora.voice.callerid"
+    static let appGroupId = "group.ai.nexora.movesmart.callerid"
     static let entriesKey = "nexora_call_directory_entries"
 
     override func beginRequest(with context: CXCallDirectoryExtensionContext) {
