@@ -53,55 +53,160 @@ const DOMAINS: ReadonlyArray<{ key: DomainKey; label: string }> = [
 ];
 
 type StarterPrompt = {
+  id: string;
   domain: Exclude<DomainKey, 'all'>;
   title: string;
   subtitle: string;
   query: string;
+  liveHint?: 'move' | 'finance';
+};
+
+const DOMAIN_LABEL: Record<Exclude<DomainKey, 'all'>, string> = {
+  move: 'Move',
+  finance: 'Wealth',
+  health: 'Health',
+  work: 'Work',
 };
 
 const STARTER_PROMPTS: StarterPrompt[] = [
   {
+    id: 'fin-tax-cash',
     domain: 'finance',
-    title: 'Audit Tax & Idle Cash',
-    subtitle: 'Check regime savings & unused deductions',
+    title: 'Audit tax & idle cash',
+    subtitle: 'Review unused deductions, tax regime & cash buffer',
     query: 'Audit my cash, unused deductions & best income tax regime.',
+    liveHint: 'finance',
   },
   {
-    domain: 'finance',
-    title: 'Prepay Loan vs Increase SIP',
-    subtitle: 'Compare debt payoff against equity returns',
-    query: 'Should I prepay my floating loan or increase monthly equity SIP?',
-  },
-  {
+    id: 'move-why-route',
     domain: 'move',
-    title: 'Why This Route?',
-    subtitle: 'Traffic, ETA & reliability breakdown',
+    title: 'Explain best route now',
+    subtitle: 'Live corridor ETA, slowdowns & alternate options',
     query: 'Why is this route recommended right now?',
+    liveHint: 'move',
   },
   {
-    domain: 'move',
-    title: 'Corridor & Safety Check',
-    subtitle: 'Live traffic, road alerts & walkability',
-    query: 'Check pedestrian safety, road alerts, and corridor traffic near me.',
-  },
-  {
+    id: 'health-daily-brief',
     domain: 'health',
-    title: 'Daily Wellness Brief',
-    subtitle: 'Review recent health notes & reminders',
+    title: 'Daily wellness brief',
+    subtitle: 'Summarize health notes, habits & daily goals',
     query: 'Summarize my health records and daily wellness goals.',
   },
   {
+    id: 'work-morning-brief',
     domain: 'work',
-    title: 'Morning Work Briefing',
-    subtitle: 'Tasks, commute timing & day prep',
+    title: 'Morning work briefing',
+    subtitle: 'Top priorities & ideal departure window',
     query: 'Prepare my morning work briefing and ideal leave time.',
+  },
+  {
+    id: 'fin-loan-sip',
+    domain: 'finance',
+    title: 'Prepay loan vs step-up SIP',
+    subtitle: 'Compare debt interest saved against equity growth',
+    query: 'Should I prepay my floating loan or increase monthly equity SIP?',
+  },
+  {
+    id: 'move-safety',
+    domain: 'move',
+    title: 'Corridor & safety check',
+    subtitle: 'Walkability, live traffic & road alerts nearby',
+    query: 'Check pedestrian safety, road alerts, and corridor traffic near me.',
+  },
+  {
+    id: 'health-recovery',
+    domain: 'health',
+    title: 'Energy & recovery plan',
+    subtitle: 'Balance movement, sleep & peak-hour commute stress',
+    query: 'Suggest an energy and recovery routine around my schedule today.',
+  },
+  {
+    id: 'work-focus-commute',
+    domain: 'work',
+    title: 'Focus blocks & commute sync',
+    subtitle: 'Align deep work around lowest-traffic hours',
+    query: 'Help me schedule deep work blocks and the lowest-traffic commute window.',
   },
 ];
 
 const QUICK_LANGUAGES = [
-  { label: 'తెలుగు · రూట్ సలహా', query: 'ట్రాఫిక్ ఎక్కువగా ఉన్నప్పుడు ఏ రూట్ మంచిది?' },
-  { label: 'हिन्दी · ट्रैफिक अपडेट', query: 'पीक टाइम में सबसे भरोसेमंद रास्ता कौन सा है?' },
+  { badge: 'తెలుగు', label: 'రూట్ సలహా', query: 'ట్రాఫిక్ ఎక్కువగా ఉన్నప్పుడు ఏ రూట్ మంచిది?' },
+  { badge: 'हिन्दी', label: 'ट्रैफिक अपडेट', query: 'पीक टाइम में सबसे भरोसेमंद रास्ता कौन सा है?' },
 ] as const;
+
+type FollowUpChip = { label: string; query: string };
+
+/** Build contextual next-step prompts from the active domain and latest assistant reply. */
+function buildFollowUpSuggestions(
+  domain: DomainKey,
+  lastAssistant?: Msg,
+  lastUserQuery?: string,
+): FollowUpChip[] {
+  if (lastAssistant?.error && lastUserQuery) {
+    return [
+      { label: 'Retry question', query: lastUserQuery },
+      { label: 'Check live route status', query: 'Why is this route recommended right now?' },
+      { label: 'Audit tax & cashflow', query: 'Audit my cash, unused deductions & best income tax regime.' },
+    ];
+  }
+
+  const text = `${lastAssistant?.intent ?? ''} ${lastAssistant?.text ?? ''}`.toLowerCase();
+  if (lastAssistant?.financeDomain || domain === 'finance') {
+    if (text.includes('tax') || text.includes('regime') || text.includes('80c')) {
+      return [
+        { label: 'Old vs New tax split', query: 'Compare Old vs New tax regime on my current income.' },
+        { label: 'Unused deductions', query: 'Which deductions under 80C, 80D, or NPS am I missing?' },
+        { label: 'Next best money move', query: 'What is my highest-impact wealth action this month?' },
+      ];
+    }
+    if (text.includes('sip') || text.includes('loan') || text.includes('emi')) {
+      return [
+        { label: '10% step-up SIP impact', query: 'Show 5-year impact of a 10% annual step-up SIP.' },
+        { label: 'Safe monthly spend', query: 'How much can I safely invest or prepay each month?' },
+        { label: 'Check idle cash', query: 'How much idle cash should stay in my emergency buffer?' },
+      ];
+    }
+    return [
+      { label: 'Compare tax regimes', query: 'Compare Old vs New tax regime on my profile.' },
+      { label: 'Check idle cash', query: 'Audit my idle cash and emergency runway.' },
+      { label: 'Top 3 wealth actions', query: 'Give me the top 3 prioritized wealth moves right now.' },
+    ];
+  }
+
+  if (
+    domain === 'move' ||
+    text.includes('route') ||
+    text.includes('traffic') ||
+    text.includes('hazard') ||
+    text.includes('corridor')
+  ) {
+    return [
+      { label: 'Compare alternate routes', query: 'Compare alternate routes and ETA tradeoffs right now.' },
+      { label: 'Best leave window', query: 'When is the lowest-traffic departure window today?' },
+      { label: 'Any alerts ahead?', query: 'Check road alerts, bottlenecks, and safety near this corridor.' },
+    ];
+  }
+
+  if (domain === 'health') {
+    return [
+      { label: 'Turn into daily checklist', query: 'Turn this into a simple 3-item daily wellness checklist.' },
+      { label: 'Evening recovery tip', query: 'What is one quick recovery habit for tonight?' },
+    ];
+  }
+
+  if (domain === 'work') {
+    return [
+      { label: 'Top 3 priorities today', query: 'Rank my top 3 work priorities for today.' },
+      { label: 'Sync commute leave time', query: 'What time should I leave to avoid peak congestion?' },
+    ];
+  }
+
+  return [
+    { label: 'Explain why', query: 'Break down the key factors behind this recommendation.' },
+    { label: 'Next concrete step', query: 'What is the single best next step I should take now?' },
+    { label: '3-bullet summary', query: 'Summarize that in 3 concise action bullets.' },
+  ];
+}
 
 const FINANCE_KEYWORDS = [
   'tax', 'regime', '80c', '80d', 'sip', 'mutual fund', 'mf', 'loan', 'emi', 'prepay',
@@ -128,12 +233,14 @@ export default function AssistantScreen() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState('');
   const [domain, setDomain] = useState<DomainKey>('all');
+  const [showAllPrompts, setShowAllPrompts] = useState(false);
   const [attachGps, setAttachGps] = useState(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [expandedCtxId, setExpandedCtxId] = useState<number | null>(null);
   const [activeRouteCtx, setActiveRouteCtx] = useState<RouteContextPayload | undefined>(
     route.params?.routeContext,
   );
+  const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
 
   const brief = useQuery({
     queryKey: ['assistant-proactive-brief', loc.point?.latitude, loc.point?.longitude],
@@ -257,16 +364,21 @@ export default function AssistantScreen() {
     setExpandedCtxId(null);
   };
 
-  const visibleStarters = useMemo(
-    () => (domain === 'all' ? STARTER_PROMPTS : STARTER_PROMPTS.filter(p => p.domain === domain)),
-    [domain],
-  );
+  const fillDraft = (query: string) => {
+    setDraft(query);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const visibleStarters = useMemo(() => {
+    if (domain !== 'all') return STARTER_PROMPTS.filter(p => p.domain === domain);
+    return showAllPrompts ? STARTER_PROMPTS : STARTER_PROMPTS.slice(0, 4);
+  }, [domain, showAllPrompts]);
 
   const followUpSuggestions = useMemo(() => {
-    if (domain === 'finance') return ['Compare Old vs New tax', 'Check idle cash'];
-    if (domain === 'move') return ['Any hazards near me?', 'Best departure window?'];
-    return ['Why this recommendation?', 'What should I do next?'];
-  }, [domain]);
+    const lastAssistant = [...messages].reverse().find(m => m.from === 'assistant');
+    const lastUser = [...messages].reverse().find(m => m.from === 'user');
+    return buildFollowUpSuggestions(domain, lastAssistant, lastUser?.text);
+  }, [domain, messages]);
 
   const gpsActive = permissions.gpsLocation && attachGps && !!loc.point;
 
@@ -353,34 +465,97 @@ export default function AssistantScreen() {
                 </View>
                 <Text style={styles.heroTitle}>How can I help today?</Text>
                 <Text style={styles.heroBody}>
-                  Ask about Hyderabad routes, live traffic, tax savings, SIP vs loan decisions, or your daily briefing in English, తెలుగు, or हिन्दी.
+                  Live guidance across routes, wealth, wellness & work — tap any prompt to run or edit it before sending.
                 </Text>
               </Card>
 
-              <Text style={styles.starterSectionTitle}>SUGGESTED PROMPTS</Text>
-              <View style={styles.starterGrid}>
-                {visibleStarters.map(item => (
-                  <Tappable
-                    key={item.title}
-                    onPress={() => submit(item.query)}
-                    style={styles.starterCard}>
-                    <View style={styles.starterHeader}>
-                      <View style={[styles.dot, { backgroundColor: moduleColors[item.domain] }]} />
-                      <Text style={styles.starterDomain}>{item.domain.toUpperCase()}</Text>
-                    </View>
-                    <Text style={styles.starterTitle}>{item.title}</Text>
-                    <Text style={styles.starterSub} numberOfLines={2}>
-                      {item.subtitle}
+              <View style={styles.starterSectionHeader}>
+                <Text style={styles.starterSectionTitle}>TRY ASKING</Text>
+                {domain === 'all' && STARTER_PROMPTS.length > 4 && (
+                  <TouchableOpacity
+                    onPress={() => setShowAllPrompts(v => !v)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={styles.starterToggle}>
+                      {showAllPrompts ? 'Show fewer' : `Show all (${STARTER_PROMPTS.length})`}
                     </Text>
-                  </Tappable>
-                ))}
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.starterList}>
+                {visibleStarters.map(item => {
+                  const accent = moduleColors[item.domain];
+                  const liveTag =
+                    item.liveHint === 'finance' &&
+                    finRadar.data &&
+                    finRadar.data.total_annualized_savings_inr > 0
+                      ? `Save ${formatINR(finRadar.data.total_annualized_savings_inr)}/yr`
+                      : item.liveHint === 'move' && brief.data
+                      ? 'Live corridor'
+                      : null;
+
+                  return (
+                    <View key={item.id} style={styles.starterRowCard}>
+                      <Tappable
+                        onPress={() => submit(item.query)}
+                        accessibilityLabel={`Ask ${item.title}`}
+                        style={styles.starterMainTap}>
+                        <View style={styles.starterTopLine}>
+                          <View style={styles.starterDomainPill}>
+                            <View style={[styles.dot, { backgroundColor: accent }]} />
+                            <Text style={[styles.starterDomain, { color: accent }]}>
+                              {DOMAIN_LABEL[item.domain]}
+                            </Text>
+                          </View>
+                          {liveTag ? (
+                            <View style={styles.liveTagPill}>
+                              <Text style={styles.liveTagText}>{liveTag}</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.starterTitle} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text style={styles.starterSub} numberOfLines={2}>
+                          {item.subtitle}
+                        </Text>
+                      </Tappable>
+
+                      <View style={styles.starterActions}>
+                        <TouchableOpacity
+                          onPress={() => fillDraft(item.query)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel={`Edit prompt: ${item.title}`}
+                          style={styles.editPromptBtn}>
+                          <Text style={styles.editPromptText}>Edit</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => submit(item.query)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel={`Run prompt: ${item.title}`}
+                          style={styles.runPromptBtn}>
+                          <Text style={styles.runPromptArrow}>↗</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
               </View>
 
               {(domain === 'all' || domain === 'move') && (
-                <View style={styles.langRow}>
-                  {QUICK_LANGUAGES.map(l => (
-                    <Chip key={l.label} label={l.label} onPress={() => submit(l.query)} />
-                  ))}
+                <View style={styles.langWrap}>
+                  <Text style={styles.langLabel}>Ask in regional languages</Text>
+                  <View style={styles.langRow}>
+                    {QUICK_LANGUAGES.map(l => (
+                      <TouchableOpacity
+                        key={l.label}
+                        onPress={() => submit(l.query)}
+                        style={styles.langPill}>
+                        <Text style={styles.langBadge}>{l.badge}</Text>
+                        <Text style={styles.langText}>{l.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               )}
             </FadeIn>
@@ -532,14 +707,18 @@ export default function AssistantScreen() {
 
         {/* Contextual follow-up strip only during active conversation */}
         {messages.length > 0 && !ask.isPending && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.followUpRow}>
-            {followUpSuggestions.map(q => (
-              <Chip key={q} label={q} onPress={() => submit(q)} />
-            ))}
-          </ScrollView>
+          <View style={styles.followUpWrap}>
+            <Text style={styles.followUpLabel}>SUGGESTED NEXT</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ flexGrow: 0 }}
+              contentContainerStyle={styles.followUpRow}>
+              {followUpSuggestions.map(item => (
+                <Chip key={item.label} label={`✦ ${item.label}`} onPress={() => submit(item.query)} />
+              ))}
+            </ScrollView>
+          </View>
         )}
 
         {/* Clean Composer with inline GPS toggle */}
@@ -559,6 +738,7 @@ export default function AssistantScreen() {
             </Text>
           </TouchableOpacity>
           <TextInput
+            ref={inputRef}
             style={styles.input}
             placeholder={
               domain === 'finance'
@@ -636,9 +816,9 @@ const styles = StyleSheet.create({
   },
   contextChipText: { fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '600', flexShrink: 1 },
   scrollBody: { padding: spacing.m, gap: spacing.s },
-  scrollBodyEmpty: { flexGrow: 1, justifyContent: 'center' },
+  scrollBodyEmpty: { flexGrow: 1, justifyContent: 'flex-start', paddingTop: spacing.s, paddingBottom: spacing.l },
   welcomeWrap: { gap: spacing.m },
-  heroCard: { gap: spacing.s },
+  heroCard: { gap: 6 },
   heroBadge: {
     alignSelf: 'flex-start',
     backgroundColor: 'rgba(16, 185, 129, 0.14)',
@@ -656,47 +836,85 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: colors.textPrimary,
     fontFamily: fontFamily.sans,
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
   },
   heroBody: {
     color: colors.textSecondary,
     fontFamily: fontFamily.sans,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12.5,
+    lineHeight: 18,
+  },
+  starterSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.xs,
   },
   starterSectionTitle: {
     ...typography.label,
     color: colors.textMuted,
-    marginTop: spacing.xs,
   },
-  starterGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  starterToggle: {
+    color: colors.routeCyan,
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  starterList: {
     gap: spacing.s,
   },
-  starterCard: {
-    width: '48%',
-    flexGrow: 1,
+  starterRowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.bgSurface,
     borderRadius: radii.card,
-    padding: 12,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
-    gap: 4,
+    paddingLeft: 12,
+    paddingRight: 10,
+    paddingVertical: 10,
+    gap: 10,
   },
-  starterHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  starterMainTap: {
+    flex: 1,
+    gap: 3,
+  },
+  starterTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  starterDomainPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
   starterDomain: {
-    color: colors.textMuted,
+    fontFamily: fontFamily.medium,
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  liveTagPill: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.28)',
+  },
+  liveTagText: {
+    color: colors.accentBright,
     fontFamily: fontFamily.medium,
     fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontWeight: '600',
   },
   starterTitle: {
     color: colors.textPrimary,
     fontFamily: fontFamily.medium,
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '600',
   },
   starterSub: {
@@ -705,7 +923,73 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     lineHeight: 16,
   },
+  starterActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  editPromptBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  editPromptText: {
+    color: colors.textSecondary,
+    fontFamily: fontFamily.medium,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  runPromptBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(29, 143, 225, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(29, 143, 225, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  runPromptArrow: {
+    color: colors.routeCyan,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  langWrap: {
+    gap: 6,
+    marginTop: spacing.xs,
+  },
+  langLabel: {
+    color: colors.textMuted,
+    fontFamily: fontFamily.medium,
+    fontSize: 11,
+    fontWeight: '600',
+  },
   langRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s },
+  langPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  langBadge: {
+    color: colors.routeCyan,
+    fontFamily: fontFamily.medium,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  langText: {
+    color: colors.textSecondary,
+    fontFamily: fontFamily.sans,
+    fontSize: 11.5,
+  },
   bubble: {
     maxWidth: '88%',
     padding: 12,
@@ -782,7 +1066,22 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   deepLinkText: { color: colors.routeCyan, fontFamily: fontFamily.medium, fontSize: 11.5, fontWeight: '600' },
-  followUpRow: { flexDirection: 'row', gap: spacing.s, paddingHorizontal: spacing.m, paddingVertical: 6 },
+  followUpWrap: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderSubtle,
+    paddingTop: 6,
+    paddingBottom: 4,
+    gap: 4,
+  },
+  followUpLabel: {
+    color: colors.textMuted,
+    fontFamily: fontFamily.medium,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    paddingHorizontal: spacing.m,
+  },
+  followUpRow: { flexDirection: 'row', gap: spacing.s, paddingHorizontal: spacing.m, paddingBottom: 4 },
   dot: { width: 6, height: 6, borderRadius: 3 },
   composer: {
     flexDirection: 'row',
