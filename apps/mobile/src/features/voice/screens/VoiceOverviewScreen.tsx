@@ -9,6 +9,7 @@ import {
   getNativeCallerCapabilities,
   putAudioToPresignedUrl,
   requestAndroidScreeningRole,
+  resolveVoiceStorageUrl,
   syncOsCallerDirectory,
 } from '../../../core/native/callerIdBridge';
 import { Card, Input, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
@@ -352,7 +353,7 @@ export default function VoiceOverviewScreen() {
   const presignDownloadMut = useMutation({
     mutationFn: () => voiceApi.presignDownload(activeConversation!.recording.recording_id),
     onSuccess: res => {
-      setDownloadUrl(res.download_url);
+      setDownloadUrl(resolveVoiceStorageUrl(res.download_url));
       setCallerNotice(`Presigned S3 download ready (${res.s3_presigned_status}).`);
     },
     onError: (err: any) => setCallerNotice(err?.message ?? 'Presigned download failed'),

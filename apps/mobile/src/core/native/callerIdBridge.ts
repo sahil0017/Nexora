@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
+import { API_BASE_URL } from '../config';
 
 type NativeCallerModule = {
   syncCallerDirectory?: (entriesJson: string) => Promise<any>;
@@ -101,12 +102,21 @@ export async function requestAndroidScreeningRole(): Promise<{
  * Upload raw audio bytes directly to the backend-issued presigned URL (AWS S3 SigV4
  * or signed dev fallback) without routing multi-MB blobs through the JSON API server.
  */
+export function resolveVoiceStorageUrl(rawUrl: string): string {
+  if (!rawUrl || /^https?:\/\//i.test(rawUrl)) {
+    return rawUrl;
+  }
+  const serverOrigin = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+  return `${serverOrigin}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
+}
+
 export async function putAudioToPresignedUrl(
   uploadUrl: string,
   body: Blob | string,
   requiredHeaders: Record<string, string> = {},
 ): Promise<{ ok: boolean; etag?: string; status: number }> {
-  const res = await fetch(uploadUrl, {
+  const targetUrl = resolveVoiceStorageUrl(uploadUrl);
+  const res = await fetch(targetUrl, {
     method: 'PUT',
     headers: {
       'Content-Type': requiredHeaders['Content-Type'] || 'audio/wav',
@@ -136,7 +146,7 @@ export async function fetchDeviceCallLogs(limit = 200): Promise<{
     logs: [],
     note:
       Platform.OS === 'ios'
-        ? 'iOS restricts third-party CallLog history queries; export or paste call logs CSV/JSON to import dynamically.'
-        : 'Native CallLog bridge requires Android prebuild; paste or upload CSV/JSON call logs to import dynamically.',
+        ? 'Apple iOS blocks third-party apps from querying CallLog history. Export or paste call logs CSV/JSON above to import.'
+        : 'Expo Go cannot read Android READ_CALL_LOG natively (custom EAS Dev/Prod Android build required). Paste CSV/JSON or pick a call log file above to import now.',
   };
 }

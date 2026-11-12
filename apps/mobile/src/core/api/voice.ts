@@ -399,9 +399,9 @@ export type CallLogInsights = {
 };
 
 export const voiceApi = {
-  overview: () => api.get<VoiceOverviewResponse>('/api/v1/voice/overview'),
-  conversations: () => api.get<{ conversations: ConversationIR[]; count: number }>('/api/v1/voice/conversations'),
-  getConversation: (id: string) => api.get<ConversationIR>(`/api/v1/voice/conversations/${id}`),
+  overview: () => api.get<VoiceOverviewResponse>('/voice/overview'),
+  conversations: () => api.get<{ conversations: ConversationIR[]; count: number }>('/voice/conversations'),
+  getConversation: (id: string) => api.get<ConversationIR>(`/voice/conversations/${id}`),
   capture: (body: {
     title: string;
     source_type?: string;
@@ -410,7 +410,7 @@ export const voiceApi = {
     transcript_text?: string;
     snr_db?: number;
     overlap_suspected?: boolean;
-  }) => api.post<ConversationIR>('/api/v1/voice/conversations/capture', body),
+  }) => api.post<ConversationIR>('/voice/conversations/capture', body),
   importRecording: (body: {
     title: string;
     source_type?: string;
@@ -418,36 +418,36 @@ export const voiceApi = {
     consent_granted: boolean;
     transcript_text: string;
     snr_db?: number;
-  }) => api.post<ConversationIR>('/api/v1/voice/conversations/import', body),
-  reprocess: (id: string) => api.post<ConversationIR>(`/api/v1/voice/conversations/${id}/process`, {}),
+  }) => api.post<ConversationIR>('/voice/conversations/import', body),
+  reprocess: (id: string) => api.post<ConversationIR>(`/voice/conversations/${id}/process`, {}),
   addCorrection: (
     conversationId: string,
     body: { target_type: string; target_id: string; corrected_value: string; reason?: string },
-  ) => api.post<HumanCorrectionIR>(`/api/v1/voice/conversations/${conversationId}/corrections`, body),
+  ) => api.post<HumanCorrectionIR>(`/voice/conversations/${conversationId}/corrections`, body),
   decideAction: (actionId: string, decision: 'approved' | 'rejected') =>
-    api.post<ActionSuggestionIR>(`/api/v1/voice/actions/${actionId}/decide`, { decision }),
+    api.post<ActionSuggestionIR>(`/voice/actions/${actionId}/decide`, { decision }),
   searchMemory: (q: string) =>
     api.get<{ query: string; count: number; results: Array<Record<string, any>> }>(
-      `/api/v1/voice/memory/search?q=${encodeURIComponent(q)}`,
+      `/voice/memory/search?q=${encodeURIComponent(q)}`,
     ),
   askQA: (question: string, conversationId?: string) =>
-    api.post<VoiceQAResponse>('/api/v1/voice/qa', { question, conversation_id: conversationId }),
+    api.post<VoiceQAResponse>('/voice/qa', { question, conversation_id: conversationId }),
   exportEvidence: (conversationId: string) =>
-    api.get<Record<string, any>>(`/api/v1/voice/evidence/${conversationId}/export`),
+    api.get<Record<string, any>>(`/voice/evidence/${conversationId}/export`),
   toggleLegalHold: (conversationId: string, legalHold: boolean, reason?: string) =>
-    api.post<EvidenceRecord>(`/api/v1/voice/evidence/${conversationId}/legal-hold`, {
+    api.post<EvidenceRecord>(`/voice/evidence/${conversationId}/legal-hold`, {
       legal_hold: legalHold,
       reason,
     }),
-  modelStatus: () => api.get<Record<string, any>>('/api/v1/voice/models/status'),
+  modelStatus: () => api.get<Record<string, any>>('/voice/models/status'),
   startSession: (body: {
     title: string;
     capture_mode: 'foreground_mic' | 'background_service_mic' | 'call_dual_track' | 'meeting_stream';
     source_type?: string;
     language?: string;
     consent_granted: boolean;
-  }) => api.post<CaptureSession>('/api/v1/voice/sessions/start', body),
-  getSession: (id: string) => api.get<CaptureSession>(`/api/v1/voice/sessions/${id}`),
+  }) => api.post<CaptureSession>('/voice/sessions/start', body),
+  getSession: (id: string) => api.get<CaptureSession>(`/voice/sessions/${id}`),
   streamChunk: (
     id: string,
     body: {
@@ -463,15 +463,15 @@ export const voiceApi = {
     },
   ) =>
     api.post<{ deduplicated: boolean; session: CaptureSession; ir: ConversationIR }>(
-      `/api/v1/voice/sessions/${id}/chunk`,
+      `/voice/sessions/${id}/chunk`,
       body,
     ),
   updateSessionState: (id: string, state: 'active' | 'paused' | 'background') =>
-    api.post<CaptureSession>(`/api/v1/voice/sessions/${id}/state`, { state }),
+    api.post<CaptureSession>(`/voice/sessions/${id}/state`, { state }),
   finalizeSession: (id: string) =>
-    api.post<{ session: CaptureSession; ir: ConversationIR }>(`/api/v1/voice/sessions/${id}/finalize`, {}),
+    api.post<{ session: CaptureSession; ir: ConversationIR }>(`/voice/sessions/${id}/finalize`, {}),
   resolveCaller: (body: { phone_number: string; caller_name?: string; caller_source?: string }) =>
-    api.post<CallerContextResponse>('/api/v1/voice/caller/resolve', body),
+    api.post<CallerContextResponse>('/voice/caller/resolve', body),
   classifyCaller: (body: {
     phone_number: string;
     display_name: string;
@@ -481,13 +481,13 @@ export const voiceApi = {
     known_purpose?: string;
     is_spam?: boolean;
     conversation_id?: string;
-  }) => api.post<CallerDirectoryEntry>('/api/v1/voice/caller/classify', body),
+  }) => api.post<CallerDirectoryEntry>('/voice/caller/classify', body),
   reportCallerSpam: (body: { phone_number: string; reason?: string }) =>
-    api.post<CallerDirectoryEntry>('/api/v1/voice/caller/report-spam', body),
+    api.post<CallerDirectoryEntry>('/voice/caller/report-spam', body),
   syncCallerDirectory: () =>
-    api.get<{ entries: CallerDirectoryEntry[]; count: number; mode: string }>('/api/v1/voice/caller/directory-sync'),
+    api.get<{ entries: CallerDirectoryEntry[]; count: number; mode: string }>('/voice/caller/directory-sync'),
   callerTimeline: (phoneNumber: string) =>
-    api.get<CallerContextResponse>(`/api/v1/voice/caller/timeline?phone_number=${encodeURIComponent(phoneNumber)}`),
+    api.get<CallerContextResponse>(`/voice/caller/timeline?phone_number=${encodeURIComponent(phoneNumber)}`),
   importCallLogs: (body: {
     source?: string;
     raw_csv?: string;
@@ -504,18 +504,18 @@ export const voiceApi = {
     }>;
   }) =>
     api.post<{ imported_count: number; linked_conversations: number; insights: CallLogInsights }>(
-      '/api/v1/voice/caller/import-logs',
+      '/voice/caller/import-logs',
       body,
     ),
   callLogs: (limit = 200) =>
     api.get<{ logs: CallLogEntry[]; count: number; insights: CallLogInsights }>(
-      `/api/v1/voice/caller/logs?limit=${limit}`,
+      `/voice/caller/logs?limit=${limit}`,
     ),
-  callLogInsights: () => api.get<CallLogInsights>('/api/v1/voice/caller/insights'),
+  callLogInsights: () => api.get<CallLogInsights>('/voice/caller/insights'),
   bindCaller: (
     conversationId: string,
     body: { phone_number?: string; caller_name?: string; caller_source?: string; call_direction?: string },
-  ) => api.post<ConversationIR>(`/api/v1/voice/conversations/${conversationId}/caller`, body),
+  ) => api.post<ConversationIR>(`/voice/conversations/${conversationId}/caller`, body),
   presignUpload: (body: {
     title: string;
     source_type?: string;
@@ -526,7 +526,7 @@ export const voiceApi = {
     caller_source?: string;
     call_direction?: string;
     consent_granted: boolean;
-  }) => api.post<PresignUploadResponse>('/api/v1/voice/recordings/presign-upload', body),
+  }) => api.post<PresignUploadResponse>('/voice/recordings/presign-upload', body),
   completeUpload: (
     recordingId: string,
     body: {
@@ -543,12 +543,12 @@ export const voiceApi = {
     },
   ) =>
     api.post<{ ir: ConversationIR; download_url: string; storage_mode: string }>(
-      `/api/v1/voice/recordings/${recordingId}/complete-upload`,
+      `/voice/recordings/${recordingId}/complete-upload`,
       body,
     ),
   presignDownload: (recordingId: string) =>
     api.get<{ download_url: string; storage_uri: string; s3_object_key: string; s3_presigned_status: string }>(
-      `/api/v1/voice/recordings/${recordingId}/presign-download`,
+      `/voice/recordings/${recordingId}/presign-download`,
     ),
-  streamUrl: () => `${API_BASE_URL}/api/v1/voice/stream`,
+  streamUrl: () => `${API_BASE_URL}/voice/stream`,
 };

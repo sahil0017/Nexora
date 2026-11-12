@@ -40,7 +40,8 @@
           "locationWhenInUsePermission": "Allow NEXORA to access your location for live multimodal routing and road hazard alerts."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "./plugins/withNexoraCallerId"
     ],
     "updates": {
       "url": "https://u.expo.dev/b87ce3ad-1f04-42cd-8535-06a913523a33"
