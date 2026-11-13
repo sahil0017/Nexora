@@ -4,6 +4,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { financeApi } from '../../../core/api/finance';
 import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { StatusPill } from '../../../core/design-system/motion';
 import {
@@ -186,16 +187,19 @@ export default function IntegrationsScreen() {
           <Text style={styles.summaryText}>
             Pick a CSV, PDF, or text statement directly from your device without granting storage permissions.
           </Text>
-          <DocumentImportRow />
+          <DocumentImportRow onImported={() => void handleSyncOne('finance')} />
         </Card>
       </View>
     </Screen>
   );
 }
 
-function DocumentImportRow() {
+function DocumentImportRow({ onImported }: { onImported: () => void }) {
   const [status, setStatus] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+
   const handlePick = async () => {
+    setImporting(true);
     try {
       const res = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'application/pdf', 'text/plain'],
@@ -203,14 +207,53 @@ function DocumentImportRow() {
       });
       if (res.canceled || !res.assets?.[0]) return;
       const asset = res.assets[0];
-      setStatus(`Selected ${asset.name} (${Math.round((asset.size ?? 0) / 1024)} KB) — ready for ingestion`);
-    } catch {
-      setStatus('Could not open document picker');
+      const lower = (asset.name ?? '').toLowerCase();
+      if (lower.endsWith('.pdf') || asset.mimeType === 'application/pdf') {
+        setStatus(`Selected ${asset.name} — export bank statement as CSV or TXT for automatic line-item ingestion.`);
+        return;
+      }
+
+      const rawText = await fetch(asset.uri).then(r => r.text());
+      const lines = rawText
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(Boolean);
+      // Skip common CSV header line
+      const rows =
+        lines.length > 1 && /date|amount|description|narration|debit|credit/i.test(lines[0])
+          ? lines.slice(1)
+          : lines;
+      const batch = rows.slice(0, 50).map(line => ({
+        source_channel: 'manual_import' as const,
+        raw_text: line,
+        currency: 'INR',
+      }));
+      if (batch.length === 0) {
+        setStatus(`${asset.name} has no readable transaction rows.`);
+        return;
+      }
+      const result = await financeApi.smartSyncBatch({ alerts: batch });
+      setStatus(
+        `Imported ${result.ingested_alerts} transaction(s) from ${asset.name}${
+          result.discovered_entities?.length ? ` · ${result.discovered_entities.slice(0, 3).join(', ')}` : ''
+        }`,
+      );
+      onImported();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'Could not import document');
+    } finally {
+      setImporting(false);
     }
   };
+
   return (
     <View style={{ gap: spacing.xs, marginTop: spacing.xs }}>
-      <PrimaryButton title="Import CSV / PDF Statement" variant="secondary" onPress={() => void handlePick()} />
+      <PrimaryButton
+        title={importing ? 'Importing Statement...' : 'Import CSV / PDF Statement'}
+        variant="secondary"
+        loading={importing}
+        onPress={() => void handlePick()}
+      />
       {status ? <Text style={styles.syncTime}>{status}</Text> : null}
     </View>
   );
