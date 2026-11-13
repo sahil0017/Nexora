@@ -9,12 +9,14 @@ import { FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/design-sys
 import { colors, fontFamily, moduleColors, spacing } from '../../../app/theme/tokens';
 import { modeLabel, platformApi } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
+import { healthApi } from '../../../core/api/health';
 import { voiceApi } from '../../../core/api/voice';
 import { getAuthToken, setAuthToken } from '../../../core/api/client';
 import { useMe } from '../../../core/auth/useMe';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { useNavPreferences } from '../../../core/state/useNavPreferences';
 import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
+import { HealthMetricBar, SparklineChart } from '../../health/components/HealthVisualizations';
 
 function initialsOf(name?: string) {
   if (!name) return 'NX';
@@ -26,7 +28,6 @@ function initialsOf(name?: string) {
 }
 
 const UPCOMING_MODULES = [
-  { id: 'health', label: 'Health', tag: 'Vitals & Care · Next' },
   { id: 'work', label: 'Work', tag: 'Focus & Tasks · Next' },
 ] as const;
 
@@ -82,6 +83,19 @@ export default function ProfileScreen() {
     queryFn: voiceApi.callLogInsights,
     retry: 0,
   });
+
+  const healthSessions = useQuery({
+    queryKey: ['profile-health-sessions'],
+    queryFn: () => healthApi.listSleepSessions('default-user', 6),
+    retry: 0,
+  });
+
+  const healthList = healthSessions.data?.sessions ?? [];
+  const latestHealth = healthList[0] ?? null;
+  const healthSpark = [...healthList]
+    .reverse()
+    .map(s => s.research_estimate?.value ?? 0)
+    .filter(v => v > 0);
 
   const signIn = useMutation({
     mutationFn: (mode: 'login' | 'register') =>
@@ -227,6 +241,39 @@ export default function ProfileScreen() {
               </Text>
             </View>
             <Text style={[styles.chevron, { color: moduleColors.voice }]}>Open ›</Text>
+          </Tappable>
+
+          <View style={styles.divider} />
+
+          <Tappable
+            onPress={() => nav.navigate('Health')}
+            style={{ gap: spacing.s }}>
+            <View style={styles.moduleRow}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.rowInline}>
+                  <Text style={styles.rowTitle}>NEXORA Health</Text>
+                  <StatusPill label="LIVE" tone="success" />
+                </View>
+                <Text style={styles.sub}>
+                  {latestHealth
+                    ? `Sleep Index ${latestHealth.research_estimate.value.toFixed(2)} · ${healthList.length} nights · ${permissions.healthDeviceSensors ? 'Sensors active' : 'Sensors off'}`
+                    : `On-device sleep & body sensors · ${permissions.healthDeviceSensors ? 'Sensors active' : 'Tap to enable'}`}
+                </Text>
+              </View>
+              <Text style={[styles.chevron, { color: moduleColors.health }]}>Open ›</Text>
+            </View>
+            <SparklineChart
+              values={healthSpark}
+              height={42}
+              emptyLabel="No sleep sessions logged yet"
+            />
+            {latestHealth ? (
+              <HealthMetricBar
+                label="Latest Signal Quality"
+                valueLabel={`${Math.round((latestHealth.evidence.signal_quality_score ?? 0) * 100)}%`}
+                progress={latestHealth.evidence.signal_quality_score ?? 0}
+              />
+            ) : null}
           </Tappable>
 
           <View style={styles.divider} />

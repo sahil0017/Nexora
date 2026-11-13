@@ -12,6 +12,12 @@ import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system
 import { Chip, StatusPill } from '../../../core/design-system/motion';
 import { useDevicePhysioSensors } from '../../../core/sensors/useDevicePhysioSensors';
 import { Screen } from '../../../shared/components/Screen';
+import {
+  HealthMetricBar,
+  SleepArchitectureBar,
+  SleepConfidenceRangeBar,
+  SparklineChart,
+} from '../components/HealthVisualizations';
 
 const HARDWARE_TIERS: { key: HardwareTier; label: string }[] = [
   { key: 'consumer_phone_sensors', label: 'Phone Only' },
@@ -22,7 +28,7 @@ const HARDWARE_TIERS: { key: HardwareTier; label: string }[] = [
 
 export default function SleepClearanceScreen() {
   const nav = useNavigation<any>();
-  const [hardwareTier, setHardwareTier] = useState<HardwareTier>('clinical_eeg_ppg_resp');
+  const [hardwareTier, setHardwareTier] = useState<HardwareTier>('wearable_ppg_imu');
   const [modelStage, setModelStage] = useState<'M0' | 'M1'>('M1');
   const [presetMode, setPresetMode] = useState<'deep_n3' | 'fragmented'>('deep_n3');
   const [latestSession, setLatestSession] = useState<SleepClearanceSession | null>(null);
@@ -31,7 +37,7 @@ export default function SleepClearanceScreen() {
 
   const historyQuery = useQuery({
     queryKey: ['health', 'sleep-clearance', 'sessions'],
-    queryFn: () => healthApi.listSleepSessions('default-user', 6),
+    queryFn: () => healthApi.listSleepSessions('default-user', 7),
   });
 
   const runModel = useMutation({
@@ -50,7 +56,7 @@ export default function SleepClearanceScreen() {
         cohort_id: 'nexora-pilot-01',
         model_stage: modelStage,
         hardware_tier: hardwareTier,
-        is_simulated: sensors.sourceMode === 'lab_calibration_sim',
+        is_simulated: false,
         eeg_delta_ratio: hasEeg ? (isDeep ? 0.48 : 0.19) : undefined,
         n3_fraction: hasEeg ? (isDeep ? 0.24 : 0.09) : undefined,
         sleep_fragmentation_index: isDeep ? 0.11 : 0.36,
@@ -68,12 +74,19 @@ export default function SleepClearanceScreen() {
     },
   });
 
-  const activeResult = latestSession ?? historyQuery.data?.sessions?.[0] ?? null;
+  const sessions = historyQuery.data?.sessions ?? [];
+  const activeResult = latestSession ?? sessions[0] ?? null;
+  const trendValues = [...sessions]
+    .reverse()
+    .map(s => s.research_estimate?.value ?? 0)
+    .filter(v => v > 0);
+
+  const isDeepPreset = presetMode === 'deep_n3';
 
   return (
     <Screen
-      title="Sleep & Brain-Fluid Insights"
-      subtitle="Overnight physiology summary (not a medical diagnosis)"
+      title="Sleep & Recovery Insights"
+      subtitle="Overnight sleep physiology & trend visualization"
       badge="HEALTH · SLEEP"
       rightAction={
         <TouchableOpacity onPress={() => nav.goBack()}>
@@ -81,45 +94,101 @@ export default function SleepClearanceScreen() {
         </TouchableOpacity>
       }>
       <View style={styles.content}>
-        <Card style={styles.guardrailCard}>
-          <StatusPill label="IMPORTANT NOTE" tone="warning" />
-          <Text style={styles.guardrailText}>
-            NEXORA never claims to measure or improve brain waste clearance from ordinary smartwatch
-            sleep scores. Missing sensors (EEG, heart, MRI) are never guessed from phone motion.
-          </Text>
+        {activeResult ? (
+          <>
+            <SectionHeading title="Overnight Physiology Summary" />
+            <Card variant="featured" style={styles.resultCard}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.monoLabel}>
+                  SLEEP INDEX ({activeResult.model_stage === 'M0' ? 'QUICK' : 'ADAPTIVE'})
+                </Text>
+                <StatusPill
+                  label={activeResult.is_fallback ? 'OFFLINE' : 'RECORDED'}
+                  tone={activeResult.is_fallback ? 'warning' : 'success'}
+                />
+              </View>
+              <Text style={styles.estimateValue}>
+                {activeResult.research_estimate.value.toFixed(2)}
+                <Text style={styles.unitInline}> {activeResult.research_estimate.unit}</Text>
+              </Text>
+
+              <SleepConfidenceRangeBar
+                value={activeResult.research_estimate.value}
+                ciLow={activeResult.research_estimate.confidence_interval[0]}
+                ciHigh={activeResult.research_estimate.confidence_interval[1]}
+              />
+
+              <Text style={[styles.label, { marginTop: spacing.s }]}>Estimated Sleep Stages</Text>
+              <SleepArchitectureBar
+                deepFraction={isDeepPreset ? 0.24 : 0.1}
+                fragmentationIndex={isDeepPreset ? 0.11 : 0.34}
+              />
+
+              <HealthMetricBar
+                label="Signal Quality"
+                valueLabel={`${Math.round((activeResult.evidence.signal_quality_score ?? 0) * 100)}%`}
+                progress={activeResult.evidence.signal_quality_score ?? 0}
+              />
+
+              <View style={styles.metricsGrid}>
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricLabel}>Uncertainty</Text>
+                  <Text style={styles.metricVal}>
+                    ±{activeResult.research_estimate.uncertainty.epistemic.toFixed(3)}
+                  </Text>
+                </View>
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricLabel}>Signal Noise</Text>
+                  <Text style={styles.metricVal}>
+                    {activeResult.research_estimate.uncertainty.aleatoric.toFixed(3)}
+                  </Text>
+                </View>
+                <View style={styles.metricBox}>
+                  <Text style={styles.metricLabel}>Deep-Sleep Link</Text>
+                  <Text style={styles.metricVal}>
+                    +{activeResult.n3_associated_feature_sensitivity.toFixed(3)}
+                  </Text>
+                </View>
+              </View>
+            </Card>
+          </>
+        ) : null}
+
+        <SectionHeading title="Recent Nights Trend" />
+        <Card style={{ gap: spacing.s }}>
+          <SparklineChart
+            values={trendValues}
+            height={60}
+            emptyLabel="Generate a sleep summary below to start tracking your trend"
+          />
         </Card>
 
-        <Card variant="subtle">
+        <SectionHeading title="Live Sensor Check-In" />
+        <Card variant="subtle" style={{ gap: spacing.s }}>
           <View style={styles.rowBetween}>
-            <Text style={styles.cardTitle}>Live Sensor Check-In</Text>
+            <Text style={styles.cardTitle}>On-Device Motion & Posture</Text>
             <StatusPill
-              label={sensors.isStreaming ? 'TRACKING' : 'IDLE'}
+              label={sensors.isStreaming ? 'LIVE' : 'IDLE'}
               tone={sensors.isStreaming ? 'success' : 'info'}
             />
           </View>
           <Text style={styles.metaText}>
-            Posture: {sensors.deviceOrientation} · Movement: {sensors.microMotionRms.toFixed(4)}
+            Posture: {sensors.deviceOrientation} · Micro-motion: {sensors.microMotionRms.toFixed(3)}
           </Text>
           <View style={styles.chipRow}>
             <Chip
-              label={sensors.isStreaming ? 'Stop Tracking' : 'Start Tracking'}
+              label={sensors.isStreaming ? 'Stop Tracking' : 'Start Live Tracking'}
               active={sensors.isStreaming}
               color={moduleColors.health}
               onPress={() => (sensors.isStreaming ? sensors.stop() : void sensors.start(false))}
-            />
-            <Chip
-              label="Test Signal"
-              active={sensors.sourceMode === 'lab_calibration_sim'}
-              color={moduleColors.health}
-              onPress={() => void sensors.start(true)}
             />
             <Chip label="Manage Sensors →" onPress={() => nav.navigate('SensorStream')} />
           </View>
           {sensors.error ? <Text style={styles.warnText}>{sensors.error}</Text> : null}
         </Card>
 
-        <SectionHeading title="Choose Your Devices & Profile" />
-        <Card>
+        <SectionHeading title="Log Sleep Session" />
+        <Card style={{ gap: spacing.s }}>
           <Text style={styles.label}>Connected Devices</Text>
           <View style={styles.chipRow}>
             {HARDWARE_TIERS.map(t => (
@@ -133,7 +202,7 @@ export default function SleepClearanceScreen() {
             ))}
           </View>
 
-          <Text style={[styles.label, { marginTop: spacing.m }]}>Analysis Mode</Text>
+          <Text style={[styles.label, { marginTop: spacing.s }]}>Analysis Mode</Text>
           <View style={styles.chipRow}>
             <Chip
               label="Quick Estimate"
@@ -149,7 +218,7 @@ export default function SleepClearanceScreen() {
             />
           </View>
 
-          <Text style={[styles.label, { marginTop: spacing.m }]}>Sleep Pattern</Text>
+          <Text style={[styles.label, { marginTop: spacing.s }]}>Sleep Pattern</Text>
           <View style={styles.chipRow}>
             <Chip
               label="Deep Restful Sleep"
@@ -165,7 +234,7 @@ export default function SleepClearanceScreen() {
             />
           </View>
 
-          <View style={{ marginTop: spacing.m }}>
+          <View style={{ marginTop: spacing.s }}>
             <PrimaryButton
               title="Calculate Sleep Summary"
               loading={runModel.isPending}
@@ -174,74 +243,19 @@ export default function SleepClearanceScreen() {
           </View>
         </Card>
 
-        {activeResult ? (
-          <>
-            <SectionHeading title="Sleep Physiology Summary" />
-            <Card variant="featured" style={styles.resultCard}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.monoLabel}>
-                  SLEEP PHYSIOLOGY INDEX ({activeResult.model_stage === 'M0' ? 'QUICK' : 'ADAPTIVE'})
-                </Text>
-                <StatusPill
-                  label={activeResult.is_fallback ? 'OFFLINE ESTIMATE' : 'RESEARCH SUMMARY'}
-                  tone={activeResult.is_fallback ? 'warning' : 'info'}
-                />
-              </View>
-              <Text style={styles.estimateValue}>
-                {activeResult.research_estimate.value.toFixed(4)}
-              </Text>
-              <Text style={styles.ciText}>
-                Estimated Range: [{activeResult.research_estimate.confidence_interval[0].toFixed(4)},{' '}
-                {activeResult.research_estimate.confidence_interval[1].toFixed(4)}] ·{' '}
-                {activeResult.research_estimate.unit}
-              </Text>
-
-              <View style={styles.metricsGrid}>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Model Uncertainty</Text>
-                  <Text style={styles.metricVal}>
-                    {activeResult.research_estimate.uncertainty.epistemic.toFixed(4)}
-                  </Text>
-                </View>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Signal Noise</Text>
-                  <Text style={styles.metricVal}>
-                    {activeResult.research_estimate.uncertainty.aleatoric.toFixed(4)}
-                  </Text>
-                </View>
-                <View style={styles.metricBox}>
-                  <Text style={styles.metricLabel}>Deep-Sleep Link</Text>
-                  <Text style={styles.metricVal}>
-                    +{activeResult.n3_associated_feature_sensitivity.toFixed(4)}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={[styles.label, { marginTop: spacing.m }]}>Connected Signals</Text>
-              <Text style={styles.metaText}>
-                {activeResult.evidence.available_modalities.join(', ') || 'None'}
-              </Text>
-
-              <Text style={[styles.label, { marginTop: spacing.s }]}>Not Connected</Text>
-              <Text style={styles.warnText}>
-                {activeResult.evidence.missing_modalities.join(', ') || 'None'}
-              </Text>
-
-              <Text style={[styles.label, { marginTop: spacing.s }]}>What This Doesn&apos;t Measure</Text>
-              {activeResult.limitations.map((lim, i) => (
-                <Text key={i} style={styles.limText}>
-                  • {lim}
-                </Text>
-              ))}
-            </Card>
-          </>
-        ) : null}
-
         <PrimaryButton
           title="Compare With MRI Study Results →"
           variant="secondary"
           onPress={() => nav.navigate('MriValidation')}
         />
+
+        <Card variant="subtle" style={styles.guardrailCard}>
+          <StatusPill label="RESEARCH ONLY" tone="warning" />
+          <Text style={styles.guardrailText}>
+            NEXORA never claims to measure or improve brain waste clearance from ordinary smartwatch
+            sleep scores. Missing sensors (EEG, heart, MRI) are never guessed from phone motion.
+          </Text>
+        </Card>
       </View>
     </Screen>
   );
@@ -251,28 +265,26 @@ const styles = StyleSheet.create({
   content: { gap: spacing.m },
   backText: { fontFamily: fontFamily.medium, fontSize: 13, color: moduleColors.health, fontWeight: '600' },
   guardrailCard: {
-    borderColor: 'rgba(245, 158, 11, 0.45)',
-    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    backgroundColor: 'rgba(245, 158, 11, 0.06)',
   },
-  guardrailText: { ...typography.body, color: colors.textPrimary, marginTop: spacing.xs },
+  guardrailText: { fontFamily: fontFamily.sans, fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginTop: spacing.xs },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
   cardTitle: { ...typography.sectionHeading, color: colors.textPrimary },
-  metaText: { ...typography.body, color: colors.textSecondary, marginTop: 4 },
+  metaText: { ...typography.body, color: colors.textSecondary, marginTop: 2 },
   warnText: { ...typography.body, color: colors.statusWarning, marginTop: 4 },
-  limText: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.s },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
   label: { ...typography.label, color: colors.textSecondary },
-  resultCard: { borderColor: 'rgba(45, 212, 191, 0.4)' },
+  resultCard: { borderColor: 'rgba(45, 212, 191, 0.4)', gap: spacing.s },
   monoLabel: { fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health },
   estimateValue: {
     fontFamily: fontFamily.mono,
     fontSize: 28,
     fontWeight: '700',
     color: colors.textPrimary,
-    marginTop: 6,
   },
-  ciText: { ...typography.body, color: colors.textSecondary, marginTop: 2 },
-  metricsGrid: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.m },
+  unitInline: { fontSize: 13, fontWeight: '400', color: colors.textSecondary },
+  metricsGrid: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.xs },
   metricBox: {
     flex: 1,
     backgroundColor: colors.bgElevated,

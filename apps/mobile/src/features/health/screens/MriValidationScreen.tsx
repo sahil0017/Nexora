@@ -7,6 +7,10 @@ import { healthApi, type CohortValidationResult } from '../../../core/api/health
 import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { StatusPill } from '../../../core/design-system/motion';
 import { Screen } from '../../../shared/components/Screen';
+import { HealthMetricBar, StudyAgreementBars } from '../components/HealthVisualizations';
+
+const SAMPLE_PRED = [1.22, 1.31, 1.45, 1.5, 1.28, 1.39, 1.61, 1.44, 1.35, 1.55, 1.48, 1.3];
+const SAMPLE_MRI = [1.2, 1.33, 1.42, 1.52, 1.25, 1.4, 1.58, 1.46, 1.36, 1.53, 1.49, 1.31];
 
 export default function MriValidationScreen() {
   const nav = useNavigation<any>();
@@ -41,14 +45,13 @@ export default function MriValidationScreen() {
   });
 
   const runValidation = useMutation({
-    mutationFn: () => {
-      const pred = [1.22, 1.31, 1.45, 1.5, 1.28, 1.39, 1.61, 1.44, 1.35, 1.55, 1.48, 1.3];
-      return healthApi.validateCohort({
+    mutationFn: () =>
+      healthApi.validateCohort({
         surrogate_target: 'dti_alps_index',
-        predicted: pred,
-        mri_reference: [1.2, 1.33, 1.42, 1.52, 1.25, 1.4, 1.58, 1.46, 1.36, 1.53, 1.49, 1.31],
-        ci_low: pred.map(p => p - 0.06),
-        ci_high: pred.map(p => p + 0.06),
+        predicted: SAMPLE_PRED,
+        mri_reference: SAMPLE_MRI,
+        ci_low: SAMPLE_PRED.map(p => p - 0.06),
+        ci_high: SAMPLE_PRED.map(p => p + 0.06),
         night_groups: [
           [1.21, 1.23, 1.22],
           [1.45, 1.47, 1.44],
@@ -66,15 +69,19 @@ export default function MriValidationScreen() {
           { device_model: 'pixel_9' },
           { device_model: 'pixel_9' },
         ],
-      });
+      }),
+    onSuccess: res => {
+      setValidationResult(res);
+      void validationsQuery.refetch();
     },
-    onSuccess: res => setValidationResult(res),
   });
+
+  const activeReport = validationResult ?? validationsQuery.data?.validations?.[0] ?? null;
 
   return (
     <Screen
       title="MRI Study & Accuracy"
-      subtitle="How closely sleep estimates match clinical MRI scans"
+      subtitle="Visual agreement between sleep estimates & 3T MRI scans"
       badge="HEALTH · STUDY"
       rightAction={
         <TouchableOpacity onPress={() => nav.goBack()}>
@@ -82,6 +89,82 @@ export default function MriValidationScreen() {
         </TouchableOpacity>
       }>
       <View style={styles.content}>
+        <SectionHeading title="Study Accuracy Overview" />
+        <Card variant="featured" style={styles.resultCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.cardTitle}>Sleep vs. 3T MRI Comparison</Text>
+            <StatusPill
+              label={
+                activeReport
+                  ? activeReport.validation_passed
+                    ? 'PASSING'
+                    : 'NEEDS DATA'
+                  : 'READY'
+              }
+              tone={
+                activeReport
+                  ? activeReport.validation_passed
+                    ? 'success'
+                    : 'warning'
+                  : 'info'
+              }
+            />
+          </View>
+
+          <StudyAgreementBars predicted={SAMPLE_PRED} reference={SAMPLE_MRI} maxItems={6} />
+
+          {activeReport ? (
+            <View style={{ gap: spacing.s, marginTop: spacing.s }}>
+              <HealthMetricBar
+                label="Overall Match (Lin's CCC)"
+                valueLabel={activeReport.lin_ccc.toFixed(3)}
+                progress={activeReport.lin_ccc}
+              />
+              {'multi_night_icc' in activeReport && activeReport.multi_night_icc != null ? (
+                <HealthMetricBar
+                  label="Multi-Night Repeatability (ICC)"
+                  valueLabel={activeReport.multi_night_icc.toFixed(3)}
+                  progress={activeReport.multi_night_icc}
+                  color={colors.navBlue}
+                />
+              ) : null}
+              {'interval_coverage_95' in activeReport && activeReport.interval_coverage_95 != null ? (
+                <HealthMetricBar
+                  label="95% Confidence Coverage"
+                  valueLabel={`${Math.round(activeReport.interval_coverage_95 * 100)}%`}
+                  progress={activeReport.interval_coverage_95}
+                  color={colors.accentBright}
+                />
+              ) : null}
+              {'mae' in activeReport ? (
+                <View style={styles.grid}>
+                  <StatTile label="Avg Error" value={activeReport.mae.toFixed(3)} />
+                  <StatTile label="Offset Bias" value={activeReport.bland_altman_bias.toFixed(4)} />
+                  <StatTile
+                    label="Deep-Sleep Link"
+                    value={`+${activeReport.n3_associated_feature_sensitivity.toFixed(3)}`}
+                  />
+                </View>
+              ) : (
+                <View style={styles.grid}>
+                  <StatTile label="Sample Size" value={String(activeReport.sample_count)} />
+                  <StatTile label="Overall Match" value={activeReport.lin_ccc.toFixed(3)} />
+                  <StatTile label="Status" value={activeReport.validation_passed ? 'Passing' : 'Review'} />
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          <View style={{ marginTop: spacing.s }}>
+            <PrimaryButton
+              title="Run Accuracy Check"
+              variant="nav"
+              loading={runValidation.isPending}
+              onPress={() => runValidation.mutate()}
+            />
+          </View>
+        </Card>
+
         <SectionHeading title="Add a Clinical MRI Scan Result" />
         <Card>
           <Text style={styles.label}>Study Group ID</Text>
@@ -119,76 +202,6 @@ export default function MriValidationScreen() {
             </Text>
           ) : null}
         </Card>
-
-        <SectionHeading title="Check Study Accuracy" />
-        <Card>
-          <Text style={styles.metaText}>
-            Measures how closely overnight sleep estimates match clinical MRI scans across nights and devices.
-          </Text>
-          <View style={{ marginTop: spacing.m }}>
-            <PrimaryButton
-              title="Run Accuracy Check"
-              variant="nav"
-              loading={runValidation.isPending}
-              onPress={() => runValidation.mutate()}
-            />
-          </View>
-        </Card>
-
-        {validationsQuery.data?.validations?.length ? (
-          <Text style={styles.metaText}>
-            Saved Accuracy Checks: {validationsQuery.data.validations.length}
-          </Text>
-        ) : null}
-
-        {validationResult ? (
-          <Card variant="featured" style={styles.resultCard}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>Accuracy Report</Text>
-              <StatusPill
-                label={validationResult.validation_passed ? 'PASSING' : 'NEEDS MORE DATA'}
-                tone={validationResult.validation_passed ? 'success' : 'warning'}
-              />
-            </View>
-            <Text style={styles.iccDoc}>Multi-night repeatability check</Text>
-            {validationResult.stratified_metrics?.length ? (
-              <View style={{ marginTop: spacing.xs }}>
-                {validationResult.stratified_metrics.map((sg, idx) => (
-                  <Text key={idx} style={styles.metaText}>
-                    Device {sg.group_value}: Match {sg.lin_ccc.toFixed(3)} · Avg Error {sg.mae.toFixed(3)} ({sg.sample_count} scans)
-                  </Text>
-                ))}
-              </View>
-            ) : null}
-            <View style={styles.grid}>
-              <StatTile label="Overall Match" value={validationResult.lin_ccc.toFixed(3)} />
-              <StatTile label="Avg Error" value={validationResult.mae.toFixed(3)} />
-              <StatTile
-                label="Repeatability"
-                value={
-                  validationResult.multi_night_icc != null
-                    ? validationResult.multi_night_icc.toFixed(3)
-                    : '—'
-                }
-              />
-            </View>
-            <View style={[styles.grid, { marginTop: spacing.s }]}>
-              <StatTile label="Average Offset" value={validationResult.bland_altman_bias.toFixed(4)} />
-              <StatTile
-                label="Range Accuracy"
-                value={
-                  validationResult.interval_coverage_95 != null
-                    ? `${Math.round(validationResult.interval_coverage_95 * 100)}%`
-                    : '—'
-                }
-              />
-              <StatTile
-                label="Deep-Sleep Link"
-                value={`+${validationResult.n3_associated_feature_sensitivity.toFixed(3)}`}
-              />
-            </View>
-          </Card>
-        ) : null}
       </View>
     </Screen>
   );
@@ -219,11 +232,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   metaText: { ...typography.body, color: colors.textSecondary, marginTop: spacing.s },
-  resultCard: { borderColor: 'rgba(45, 212, 191, 0.4)' },
+  resultCard: { borderColor: 'rgba(45, 212, 191, 0.4)', gap: spacing.s },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { ...typography.sectionHeading, color: colors.textPrimary },
-  iccDoc: { fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health, marginTop: 4 },
-  grid: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.m },
+  grid: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.xs },
   tile: { flex: 1, backgroundColor: colors.bgElevated, borderRadius: radii.card, padding: spacing.s },
   tileLabel: { fontSize: 11, color: colors.textMuted },
   tileValue: { fontFamily: fontFamily.mono, fontSize: 12.5, color: colors.textPrimary, marginTop: 2 },

@@ -8,14 +8,15 @@ import { Chip, FadeIn, Skeleton, StatusPill, Tappable } from '../../../core/desi
 import { colors, fontFamily, moduleColors, spacing, typography } from '../../../app/theme/tokens';
 import { digitalTwinApi, moveApi } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
+import { healthApi } from '../../../core/api/health';
 import { voiceApi } from '../../../core/api/voice';
 import { useMe } from '../../../core/auth/useMe';
 import { useLocation } from '../../../core/location/useLocation';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
+import { HealthMetricBar, SparklineChart } from '../../health/components/HealthVisualizations';
 
 const SECONDARY_MODULES = [
-  { key: 'health', title: 'Health', desc: 'Reports & wellness timeline' },
   { key: 'work', title: 'Work', desc: 'Tasks, prep & schedules' },
 ] as const;
 
@@ -112,6 +113,27 @@ export default function HomeScreen() {
     retry: 0,
   });
 
+  const healthSessions = useQuery({
+    queryKey: ['home-health-sessions'],
+    queryFn: () => healthApi.listSleepSessions('default-user', 6),
+    refetchInterval: 60_000,
+    retry: 0,
+  });
+
+  const healthTelemetry = useQuery({
+    queryKey: ['home-health-telemetry'],
+    queryFn: () => healthApi.getTelemetry(),
+    refetchInterval: 60_000,
+    retry: 0,
+  });
+
+  const healthList = healthSessions.data?.sessions ?? [];
+  const latestHealth = healthList[0] ?? null;
+  const healthSpark = [...healthList]
+    .reverse()
+    .map(s => s.research_estimate?.value ?? 0)
+    .filter(v => v > 0);
+
   const brainUp = status.data?.brain_reachable;
   const hazardCount = hazards.data?.hazards?.length ?? 0;
   const eventCount = activeEvents.data?.events?.length ?? 0;
@@ -129,6 +151,9 @@ export default function HomeScreen() {
 
   const openVoice = (screen?: 'VoiceCapture' | 'VoiceTranscript' | 'VoiceMemory' | 'VoiceActions' | 'VoiceEvidence') =>
     nav.navigate('Voice', screen ? { screen } : undefined);
+
+  const openHealth = (screen?: 'HealthHub' | 'SleepClearance' | 'SensorStream' | 'MriValidation') =>
+    nav.navigate('Health', screen ? { screen } : undefined);
 
   return (
     <Screen
@@ -383,17 +408,82 @@ export default function HomeScreen() {
         </Card>
       </FadeIn>
 
+      {/* Flagship Health & Recovery Card */}
+      <SectionHeading title="Health & Recovery" action="Open Health →" onActionPress={() => openHealth('HealthHub')} />
+      <FadeIn index={2}>
+        <Card variant="featured" style={{ gap: spacing.s }}>
+          <Tappable onPress={() => openHealth('HealthHub')} accessibilityLabel="Open Health & Recovery">
+            <View style={styles.between}>
+              <View style={styles.modTitleRow}>
+                <View style={[styles.moduleIcon, { backgroundColor: 'rgba(45, 212, 191, 0.18)' }]}>
+                  <Text style={{ color: moduleColors.health, fontSize: 16, fontWeight: '700' }}>♥</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mobilityHeading}>Sleep & Body Sensors</Text>
+                  <Text style={styles.mobilitySub} numberOfLines={2}>
+                    Sleep physiology trends, phone motion & wearable sync
+                  </Text>
+                </View>
+              </View>
+              <StatusPill
+                label={latestHealth ? 'LIVE' : 'READY'}
+                tone={latestHealth ? 'success' : 'info'}
+              />
+            </View>
+          </Tappable>
+
+          <View style={styles.mobStatsRow}>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: moduleColors.health }]}>
+                {latestHealth ? latestHealth.research_estimate.value.toFixed(2) : '—'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Sleep index</Text>
+            </View>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: colors.accentBright }]}>
+                {latestHealth ? `${Math.round((latestHealth.evidence.signal_quality_score ?? 0) * 100)}%` : '—'}
+              </Text>
+              <Text style={styles.mobStatLbl}>Signal quality</Text>
+            </View>
+            <View style={styles.mobStat}>
+              <Text style={[styles.mobStatVal, { color: colors.textPrimary }]}>
+                {healthTelemetry.data?.sessions_count ?? healthList.length}
+              </Text>
+              <Text style={styles.mobStatLbl}>Nights logged</Text>
+            </View>
+          </View>
+
+          <SparklineChart
+            values={healthSpark}
+            height={48}
+            emptyLabel="Log a sleep session or start live sensors to see trends"
+          />
+
+          {latestHealth ? (
+            <HealthMetricBar
+              label="Latest Signal Quality"
+              valueLabel={`${Math.round((latestHealth.evidence.signal_quality_score ?? 0) * 100)}%`}
+              progress={latestHealth.evidence.signal_quality_score ?? 0}
+            />
+          ) : null}
+
+          <View style={styles.mobShortcutRow}>
+            <Chip label="🌙 Sleep" active color={moduleColors.health} onPress={() => openHealth('SleepClearance')} />
+            <Chip label="📡 Sensors" onPress={() => openHealth('SensorStream')} />
+            <Chip label="🧠 MRI Study" onPress={() => openHealth('MriValidation')} />
+          </View>
+
+          <PrimaryButton title="Open Health Hub" onPress={() => openHealth('HealthHub')} />
+        </Card>
+      </FadeIn>
+
       {/* More NEXORA Modules */}
       <SectionHeading title="More essentials" action="View all →" onActionPress={() => nav.navigate('Explore')} />
       <View style={styles.grid}>
         {SECONDARY_MODULES.map((m, i) => (
           <FadeIn key={m.key} index={i + 2} style={styles.moduleWrap}>
             <Tappable
-              onPress={() =>
-                m.key === 'health'
-                  ? nav.navigate('Health')
-                  : nav.navigate('ModuleHub', { module: m.key })
-              }
+              onPress={() => nav.navigate('ModuleHub', { module: m.key })}
               accessibilityLabel={m.title}>
               <Card style={{ gap: 4 }}>
                 <View style={styles.between}>

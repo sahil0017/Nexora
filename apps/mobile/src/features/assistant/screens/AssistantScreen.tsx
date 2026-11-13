@@ -23,10 +23,12 @@ import {
   platformApi,
 } from '../../../core/api/move';
 import { financeApi } from '../../../core/api/finance';
+import { healthApi } from '../../../core/api/health';
 import { voiceApi } from '../../../core/api/voice';
 import { useLocation } from '../../../core/location/useLocation';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
+import { HealthMetricBar, SparklineChart } from '../../health/components/HealthVisualizations';
 
 type ContextChunk = { id: string; title: string; content: string; relevance_score: number };
 
@@ -61,7 +63,7 @@ type StarterPrompt = {
   title: string;
   subtitle: string;
   query: string;
-  liveHint?: 'move' | 'finance' | 'voice';
+  liveHint?: 'move' | 'finance' | 'voice' | 'health';
 };
 
 const DOMAIN_LABEL: Record<Exclude<DomainKey, 'all'>, string> = {
@@ -101,8 +103,9 @@ const STARTER_PROMPTS: StarterPrompt[] = [
     id: 'health-daily-brief',
     domain: 'health',
     title: 'Daily wellness brief',
-    subtitle: 'Summarize health notes, habits & daily goals',
+    subtitle: 'Summarize sleep index, sensor trends & daily recovery',
     query: 'Summarize my health records and daily wellness goals.',
+    liveHint: 'health',
   },
   {
     id: 'work-morning-brief',
@@ -307,6 +310,19 @@ export default function AssistantScreen() {
     queryFn: voiceApi.overview,
     retry: 0,
   });
+
+  const healthSessions = useQuery({
+    queryKey: ['copilot-health-sessions'],
+    queryFn: () => healthApi.listSleepSessions('default-user', 6),
+    retry: 0,
+  });
+
+  const healthList = healthSessions.data?.sessions ?? [];
+  const latestHealth = healthList[0] ?? null;
+  const healthSpark = [...healthList]
+    .reverse()
+    .map(s => s.research_estimate?.value ?? 0)
+    .filter(v => v > 0);
 
   const voiceInsights = useQuery({
     queryKey: ['copilot-voice-insights'],
@@ -601,6 +617,8 @@ export default function AssistantScreen() {
                       ? 'Live corridor'
                       : item.liveHint === 'voice' && voiceOverview.data
                       ? `${voiceOverview.data.conversation_count} talks · ${voiceInsights.data?.total_calls ?? 0} calls`
+                      : item.liveHint === 'health' && latestHealth
+                      ? `Sleep Index ${latestHealth.research_estimate.value.toFixed(2)}`
                       : null;
 
                   return (
@@ -651,6 +669,39 @@ export default function AssistantScreen() {
                   );
                 })}
               </View>
+
+              {(domain === 'health' || (domain === 'all' && latestHealth)) && (
+                <Card
+                  variant="featured"
+                  style={{
+                    gap: spacing.s,
+                    marginTop: spacing.s,
+                    borderColor: 'rgba(45, 212, 191, 0.35)',
+                  }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontFamily: fontFamily.medium, fontSize: 14, fontWeight: '700', color: colors.textPrimary }}>
+                      Health & Sleep Context
+                    </Text>
+                    <TouchableOpacity onPress={() => nav.navigate('Health')}>
+                      <Text style={{ fontFamily: fontFamily.medium, fontSize: 12, color: moduleColors.health, fontWeight: '600' }}>
+                        Open Health →
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <SparklineChart
+                    values={healthSpark}
+                    height={44}
+                    emptyLabel="Log a sleep session in Health to ground Copilot insights"
+                  />
+                  {latestHealth ? (
+                    <HealthMetricBar
+                      label="Signal Quality"
+                      valueLabel={`${Math.round((latestHealth.evidence.signal_quality_score ?? 0) * 100)}%`}
+                      progress={latestHealth.evidence.signal_quality_score ?? 0}
+                    />
+                  ) : null}
+                </Card>
+              )}
 
               {(domain === 'all' || domain === 'move') && (
                 <View style={styles.langWrap}>

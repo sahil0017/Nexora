@@ -13,7 +13,9 @@ import {
 import { FadeIn, Skeleton, Tappable } from '../../../core/design-system/motion';
 import { colors, fontFamily, moduleColors, spacing } from '../../../app/theme/tokens';
 import { platformApi } from '../../../core/api/move';
+import { healthApi } from '../../../core/api/health';
 import { useMe } from '../../../core/auth/useMe';
+import { HealthMetricBar, SparklineChart } from '../../health/components/HealthVisualizations';
 
 const MODULE_INFO: Record<string, { label: string; desc: string }> = {
   move: { label: 'Mobility & Navigation', desc: 'Turn-by-turn routes, live traffic, places & alerts' },
@@ -50,6 +52,19 @@ export default function ExploreScreen() {
     enabled: !!userId,
     retry: 0,
   });
+
+  const healthSessions = useQuery({
+    queryKey: ['explore-health-sessions'],
+    queryFn: () => healthApi.listSleepSessions('default-user', 6),
+    retry: 0,
+  });
+
+  const healthList = healthSessions.data?.sessions ?? [];
+  const latestHealth = healthList[0] ?? null;
+  const healthSpark = [...healthList]
+    .reverse()
+    .map(s => s.research_estimate?.value ?? 0)
+    .filter(v => v > 0);
 
   const addDoc = useMutation({
     mutationFn: () =>
@@ -138,7 +153,8 @@ export default function ExploreScreen() {
             )}
             {modules.map((m, i) => {
               const info = MODULE_INFO[m];
-              const isLaunched = m === 'move' || m === 'finance' || m === 'voice' || m === 'assistant';
+              const isLaunched =
+                m === 'move' || m === 'finance' || m === 'voice' || m === 'assistant' || m === 'health';
               return (
                 <FadeIn key={m} index={i}>
                   <Tappable onPress={() => openModule(m)} accessibilityLabel={`${isLaunched ? 'Launch' : 'Open'} ${m}`}>
@@ -157,8 +173,13 @@ export default function ExploreScreen() {
                         style={[
                           styles.driveMiniBtn,
                           m === 'finance' ? { backgroundColor: moduleColors.finance } : null,
+                          m === 'health' ? { backgroundColor: moduleColors.health } : null,
                         ]}>
-                        <Text style={[styles.driveMiniText, m === 'finance' ? { color: '#060B10' } : null]}>
+                        <Text
+                          style={[
+                            styles.driveMiniText,
+                            m === 'finance' || m === 'health' ? { color: '#060B10' } : null,
+                          ]}>
                           {isLaunched ? 'Launch →' : 'Open →'}
                         </Text>
                       </View>
@@ -167,6 +188,47 @@ export default function ExploreScreen() {
                 </FadeIn>
               );
             })}
+
+            {/* Health & Recovery Live Visual Card */}
+            <FadeIn index={modules.length + 1}>
+              <Card variant="featured" style={{ gap: spacing.s, borderColor: 'rgba(45, 212, 191, 0.35)' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.moduleTitle}>Health & Sleep Pulse</Text>
+                  <Text style={{ fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health }}>
+                    {latestHealth ? `Index ${latestHealth.research_estimate.value.toFixed(2)}` : 'READY'}
+                  </Text>
+                </View>
+                <SparklineChart
+                  values={healthSpark}
+                  height={48}
+                  emptyLabel="Log a sleep session in Health to view your trend"
+                />
+                {latestHealth ? (
+                  <HealthMetricBar
+                    label="Signal Quality"
+                    valueLabel={`${Math.round((latestHealth.evidence.signal_quality_score ?? 0) * 100)}%`}
+                    progress={latestHealth.evidence.signal_quality_score ?? 0}
+                  />
+                ) : null}
+                <View style={{ flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap' }}>
+                  <TouchableOpacity
+                    onPress={() => nav.navigate('Health', { screen: 'SleepClearance' })}
+                    style={[styles.driveMiniBtn, { backgroundColor: 'rgba(45, 212, 191, 0.16)' }]}>
+                    <Text style={[styles.driveMiniText, { color: moduleColors.health }]}>🌙 Sleep</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => nav.navigate('Health', { screen: 'SensorStream' })}
+                    style={[styles.driveMiniBtn, { backgroundColor: 'rgba(45, 212, 191, 0.16)' }]}>
+                    <Text style={[styles.driveMiniText, { color: moduleColors.health }]}>📡 Sensors</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => nav.navigate('Health', { screen: 'MriValidation' })}
+                    style={[styles.driveMiniBtn, { backgroundColor: 'rgba(45, 212, 191, 0.16)' }]}>
+                    <Text style={[styles.driveMiniText, { color: moduleColors.health }]}>🧠 MRI Study</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            </FadeIn>
           </View>
         )}
 

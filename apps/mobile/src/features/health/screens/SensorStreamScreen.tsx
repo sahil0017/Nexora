@@ -1,18 +1,53 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
 import { healthApi, type HardwareTier } from '../../../core/api/health';
-import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
-import { Chip, StatusPill } from '../../../core/design-system/motion';
+import { Card, PrimaryButton, SectionHeading, SegmentedControl } from '../../../core/design-system/components';
+import { StatusPill } from '../../../core/design-system/motion';
 import { useDevicePhysioSensors } from '../../../core/sensors/useDevicePhysioSensors';
 import { Screen } from '../../../shared/components/Screen';
+import {
+  HealthMetricBar,
+  SensorModalityMatrix,
+  SparklineChart,
+  type ModalityStatusItem,
+} from '../components/HealthVisualizations';
+
+const TIER_OPTIONS: ReadonlyArray<{ key: HardwareTier; label: string }> = [
+  { key: 'consumer_phone_sensors', label: 'Phone' },
+  { key: 'wearable_ppg_imu', label: 'Watch + Phone' },
+  { key: 'clinical_eeg_ppg_resp', label: 'Sleep Lab' },
+];
+
+function formatPosture(raw: string): string {
+  switch (raw) {
+    case 'face_up_supine_proxy':
+      return 'Face Up';
+    case 'face_down_prone_proxy':
+      return 'Face Down';
+    case 'lateral_right_proxy':
+      return 'Right Side';
+    case 'lateral_left_proxy':
+      return 'Left Side';
+    case 'upright_device':
+      return 'Upright';
+    default:
+      return 'Calibrating';
+  }
+}
 
 export default function SensorStreamScreen() {
   const nav = useNavigation<any>();
   const [tier, setTier] = useState<HardwareTier>('consumer_phone_sensors');
+  const [motionHistory, setMotionHistory] = useState<number[]>([]);
   const sensors = useDevicePhysioSensors({ hardwareTier: tier, autoUpload: true });
+
+  useEffect(() => {
+    if (!sensors.isStreaming || !sensors.latestFrame) return;
+    setMotionHistory(prev => [...prev.slice(-15), Number(sensors.microMotionRms.toFixed(4))]);
+  }, [sensors.isStreaming, sensors.latestFrame, sensors.microMotionRms]);
 
   const telemetryQuery = useQuery({
     queryKey: ['health', 'telemetry'],
@@ -30,17 +65,48 @@ export default function SensorStreamScreen() {
     queryFn: () => healthApi.listDevices('default-user'),
   });
 
-  const capabilitiesQuery = useQuery({
-    queryKey: ['health', 'devices', 'capabilities'],
-    queryFn: () => healthApi.getDeviceCapabilities(),
-  });
-
   const serverRec = sensors.lastServerRecord;
+  const healthAppName = Platform.OS === 'ios' ? 'Apple Health' : 'Health Connect';
+
+  const modalityItems: ModalityStatusItem[] = [
+    {
+      key: 'imu',
+      label: 'Phone Motion',
+      status: sensors.isStreaming ? 'live' : sensors.sensorAllowed ? 'connected' : 'off',
+      detail: sensors.isStreaming ? `${sensors.sampleRateHz} Hz streaming` : sensors.sensorAllowed ? 'Ready' : 'Permission off',
+    },
+    {
+      key: 'wearable',
+      label: healthAppName,
+      status: sensors.wearableBridge?.available ? 'connected' : 'off',
+      detail: sensors.wearableBridge
+        ? sensors.wearableBridge.available
+          ? 'Connected'
+          : 'Not installed'
+        : 'Tap to pair',
+    },
+    {
+      key: 'hrv',
+      label: 'Heart & HRV',
+      status: sensors.wearableMetrics?.hrv_rmssd_ms ? 'connected' : tier !== 'consumer_phone_sensors' ? 'connected' : 'off',
+      detail: sensors.wearableMetrics?.hrv_rmssd_ms
+        ? `${sensors.wearableMetrics.hrv_rmssd_ms.toFixed(0)} ms`
+        : tier === 'consumer_phone_sensors'
+          ? 'Needs watch'
+          : 'Watch ready',
+    },
+    {
+      key: 'resp',
+      label: 'Breathing',
+      status: tier === 'clinical_eeg_ppg_resp' ? 'connected' : 'off',
+      detail: tier === 'clinical_eeg_ppg_resp' ? 'Lab sensor' : 'Not paired',
+    },
+  ];
 
   return (
     <Screen
-      title="Body & Sleep Sensors"
-      subtitle="Private, on-device tracking with full control over your data"
+      title="Live Body & Watch Sensors"
+      subtitle="On-device motion tracking & wearable health sync"
       badge="HEALTH · SENSORS"
       rightAction={
         <TouchableOpacity onPress={() => nav.goBack()}>
@@ -50,104 +116,92 @@ export default function SensorStreamScreen() {
       <View style={styles.content}>
         <Card variant="featured" style={styles.liveCard}>
           <View style={styles.rowBetween}>
-            <Text style={styles.cardTitle}>Live Tracking</Text>
+            <Text style={styles.cardTitle}>Real-Time Sensor Stream</Text>
             <StatusPill
-              label={sensors.isStreaming ? 'TRACKING' : 'IDLE'}
+              label={sensors.isStreaming ? 'LIVE' : 'IDLE'}
               tone={sensors.isStreaming ? 'success' : 'info'}
             />
           </View>
-          <Text style={styles.metaText}>
-            Sensor Access: {sensors.sensorAllowed ? 'Allowed' : 'Off'} · Raw Data Sharing:{' '}
-            {sensors.rawConsentAllowed ? 'Enabled' : 'Private on Device'}
-          </Text>
-          <Text style={styles.metaText}>
-            Local Buffer: {sensors.bufferCount} / 125 readings
-          </Text>
 
-          <View style={styles.chipRow}>
-            <Chip
-              label="Phone Only"
-              active={tier === 'consumer_phone_sensors'}
-              color={moduleColors.health}
-              onPress={() => setTier('consumer_phone_sensors')}
-            />
-            <Chip
-              label="Watch + Phone"
-              active={tier === 'wearable_ppg_imu'}
-              color={moduleColors.health}
-              onPress={() => setTier('wearable_ppg_imu')}
-            />
-            <Chip
-              label="Sleep Lab (EEG)"
-              active={tier === 'clinical_eeg_ppg_resp'}
-              color={moduleColors.health}
-              onPress={() => setTier('clinical_eeg_ppg_resp')}
+          <SparklineChart
+            values={motionHistory}
+            height={68}
+            emptyLabel="Tap Start Live Tracking to view real-time body motion"
+          />
+
+          <View style={styles.grid}>
+            <MetricTile label="Sleep Posture" value={formatPosture(sensors.deviceOrientation)} />
+            <MetricTile label="Micro-Motion" value={sensors.microMotionRms.toFixed(3)} />
+            <MetricTile
+              label="Z-Axis Tilt"
+              value={sensors.latestFrame ? `${sensors.latestFrame.az.toFixed(2)}` : '—'}
             />
           </View>
+
+          <HealthMetricBar
+            label="On-Device Ring Buffer"
+            valueLabel={`${sensors.bufferCount} / 125`}
+            progress={sensors.bufferCount / 125}
+          />
+
+          <SegmentedControl compact options={TIER_OPTIONS} value={tier} onChange={setTier} />
+
+          <PrimaryButton
+            title={sensors.isStreaming ? 'Stop Live Tracking' : 'Start Live Tracking'}
+            onPress={() => (sensors.isStreaming ? sensors.stop() : void sensors.start(false))}
+          />
 
           <View style={styles.btnRow}>
             <View style={{ flex: 1 }}>
               <PrimaryButton
-                title={sensors.isStreaming ? 'Stop Tracking' : 'Start Tracking'}
-                onPress={() => (sensors.isStreaming ? sensors.stop() : void sensors.start(false))}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <PrimaryButton
-                title="Test Signal"
+                title={`Connect ${healthAppName}`}
                 variant="secondary"
-                onPress={() => void sensors.start(true)}
+                onPress={() => void sensors.syncWearableBridge()}
               />
             </View>
+            {sensors.bufferCount > 0 ? (
+              <View style={{ flex: 1 }}>
+                <PrimaryButton
+                  title="Sync Now"
+                  variant="nav"
+                  onPress={() => void sensors.flushNow()}
+                />
+              </View>
+            ) : null}
           </View>
 
-          {sensors.bufferCount > 0 ? (
-            <View style={{ marginTop: spacing.s, gap: spacing.xs }}>
-              <PrimaryButton
-                title="Sync Readings Now"
-                variant="nav"
-                onPress={() => void sensors.flushNow()}
-              />
-              {sensors.rawConsentAllowed ? (
-                <PrimaryButton
-                  title="Upload Raw Research Data"
-                  variant="secondary"
-                  onPress={() => void sensors.uploadConsentedRawChunk()}
-                />
-              ) : null}
-            </View>
-          ) : null}
+          {sensors.error ? <Text style={styles.warnText}>{sensors.error}</Text> : null}
+        </Card>
 
-          <View style={{ marginTop: spacing.s, gap: spacing.xs }}>
-            <PrimaryButton
-              title="Connect Apple Health / Health Connect"
-              variant="secondary"
-              onPress={() => void sensors.syncWearableBridge()}
-            />
+        <SectionHeading title="Connected Sensor Channels" />
+        <Card style={{ gap: spacing.s }}>
+          <SensorModalityMatrix items={modalityItems} />
+          <Text style={styles.metaText}>
+            Privacy: {sensors.rawConsentAllowed ? 'Research sharing enabled' : 'Features only (raw waveforms stay on device)'}
+          </Text>
+          {sensors.rawConsentAllowed ? (
             <PrimaryButton
               title="Turn Off Research Data Sharing"
               variant="secondary"
               onPress={() => void sensors.revokeResearchConsent()}
             />
-          </View>
-          {sensors.wearableBridge ? (
-            <Text style={styles.metaText}>
-              Health App ({sensors.wearableBridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'}):{' '}
-              {sensors.wearableBridge.available ? 'Connected' : 'Not available on this device'}
-            </Text>
           ) : null}
-
-          {sensors.error ? <Text style={styles.warnText}>{sensors.error}</Text> : null}
         </Card>
 
-        <SectionHeading title="Live Sensor Readings" />
-        <Card>
+        <SectionHeading title="Sync Summary" />
+        <Card style={{ gap: 6 }}>
           <View style={styles.grid}>
-            <MetricTile label="Body Position" value={sensors.deviceOrientation} />
-            <MetricTile label="Movement" value={sensors.microMotionRms.toFixed(4)} />
             <MetricTile
-              label="Vertical Tilt"
-              value={sensors.latestFrame ? `${sensors.latestFrame.az.toFixed(2)} m/s²` : '—'}
+              label="Saved Streams"
+              value={String(latestFeaturesQuery.data?.streams?.length ?? 0)}
+            />
+            <MetricTile
+              label="Devices"
+              value={String(devicesQuery.data?.devices?.length ?? telemetryQuery.data?.devices_count ?? 0)}
+            />
+            <MetricTile
+              label="Dispatched"
+              value={String(telemetryQuery.data?.outbox_dispatched ?? 0)}
             />
           </View>
           {sensors.lastSyncAt ? (
@@ -155,40 +209,15 @@ export default function SensorStreamScreen() {
           ) : null}
           {sensors.offlineQueueCount > 0 ? (
             <Text style={styles.warnText}>
-              Waiting to sync offline: {sensors.offlineQueueCount} batch(es)
+              Queued offline: {sensors.offlineQueueCount} batch(es)
             </Text>
           ) : null}
-          {telemetryQuery.data ? (
+          {serverRec ? (
             <Text style={styles.metaText}>
-              Synced Batches: {telemetryQuery.data.outbox_dispatched} · Connected Devices:{' '}
-              {devicesQuery.data?.devices?.length ?? telemetryQuery.data.devices_count} · Saved Readings:{' '}
-              {latestFeaturesQuery.data?.streams?.length ?? 0} · Supported Sources:{' '}
-              {Object.keys(capabilitiesQuery.data?.capabilities ?? {}).length}
+              Active channels: {serverRec.available_modalities.join(', ') || 'Phone IMU'}
             </Text>
           ) : null}
         </Card>
-
-        {serverRec ? (
-          <>
-            <SectionHeading title="What Your Sensors See" />
-            <Card>
-              <Text style={styles.metaText}>
-                Active: {serverRec.available_modalities.join(', ') || 'None'}
-              </Text>
-              <Text style={styles.warnText}>
-                Not Connected: {serverRec.missing_modalities.join(', ') || 'None'}
-              </Text>
-              {serverRec.is_simulated ? (
-                <StatusPill label="TEST SIGNAL" tone="warning" />
-              ) : null}
-              {serverRec.limitations.map((lim, i) => (
-                <Text key={i} style={styles.limText}>
-                  • {lim}
-                </Text>
-              ))}
-            </Card>
-          </>
-        ) : null}
       </View>
     </Screen>
   );
@@ -198,7 +227,9 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.tile}>
       <Text style={styles.tileLabel}>{label}</Text>
-      <Text style={styles.tileValue}>{value}</Text>
+      <Text style={styles.tileValue} numberOfLines={1}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -206,17 +237,15 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   content: { gap: spacing.m },
   backText: { fontFamily: fontFamily.medium, fontSize: 13, color: moduleColors.health, fontWeight: '600' },
-  liveCard: { borderColor: 'rgba(45, 212, 191, 0.35)' },
+  liveCard: { borderColor: 'rgba(45, 212, 191, 0.35)', gap: spacing.m },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.s },
   cardTitle: { ...typography.sectionHeading, color: colors.textPrimary },
-  metaText: { ...typography.body, color: colors.textSecondary, marginTop: 4 },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.m },
-  btnRow: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.m },
-  warnText: { ...typography.body, color: colors.statusWarning, marginTop: spacing.s },
-  limText: { fontSize: 12, color: colors.textSecondary, marginTop: 4 },
+  metaText: { ...typography.body, color: colors.textSecondary, marginTop: 2 },
+  btnRow: { flexDirection: 'row', gap: spacing.s },
+  warnText: { ...typography.body, color: colors.statusWarning, marginTop: 4 },
   grid: { flexDirection: 'row', gap: spacing.s },
   tile: { flex: 1, backgroundColor: colors.bgElevated, borderRadius: radii.card, padding: spacing.s },
   tileLabel: { fontSize: 11, color: colors.textMuted },
   tileValue: { fontFamily: fontFamily.mono, fontSize: 13, color: colors.textPrimary, marginTop: 2 },
-  syncText: { fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health, marginTop: spacing.s },
+  syncText: { fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health, marginTop: 4 },
 });
