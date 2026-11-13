@@ -15,6 +15,7 @@ import DeepIntelligenceScreen from '../../features/explore/screens/DeepIntellige
 import FinanceNavigator from '../../features/finance/FinanceNavigator';
 import VoiceNavigator from '../../features/voice/VoiceNavigator';
 import HealthNavigator from '../../features/health/HealthNavigator';
+import IntegrationsScreen from '../../features/integrations/screens/IntegrationsScreen';
 import PrivacyPermissionsScreen from '../../features/privacy/screens/PrivacyPermissionsScreen';
 
 const Stack = createNativeStackNavigator();
@@ -66,6 +67,7 @@ export default function RootNavigator() {
         <Stack.Screen name="Finance" component={FinanceNavigator} />
         <Stack.Screen name="Voice" component={VoiceNavigator} />
         <Stack.Screen name="Health" component={HealthNavigator} />
+        <Stack.Screen name="Integrations" component={IntegrationsScreen} />
         <Stack.Screen name="PrivacyPermissions" component={PrivacyPermissionsScreen} />
         <Stack.Screen name="ModuleHub" component={ModuleOverviewScreen} />
         <Stack.Screen name="DeepIntelligence" component={DeepIntelligenceScreen} />

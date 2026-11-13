@@ -145,6 +145,22 @@ export default function ExploreScreen() {
               </Tappable>
             </FadeIn>
 
+            {/* Real-Time Integrations Hub Card */}
+            <FadeIn index={1}>
+              <Tappable onPress={() => nav.navigate('Integrations')} accessibilityLabel="Open Real-Time Integrations">
+                <Card variant="featured" style={[styles.row, { borderColor: 'rgba(45, 212, 191, 0.4)', backgroundColor: '#08181D' }]}>
+                  <View style={[styles.badge, { backgroundColor: moduleColors.health }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.moduleTitle}>Real-Time Integrations</Text>
+                    <Text style={styles.moduleDesc}>Auto-ingest Mobility GPS, Bank/UPI, Health Sensors & Call Logs</Text>
+                  </View>
+                  <View style={[styles.driveMiniBtn, { backgroundColor: moduleColors.health }]}>
+                    <Text style={[styles.driveMiniText, { color: '#060B10' }]}>Connect →</Text>
+                  </View>
+                </Card>
+              </Tappable>
+            </FadeIn>
+
             {me.isLoading && <Skeleton height={56} />}
             {me.isError && (
               <Text style={{ color: colors.textSecondary, fontFamily: fontFamily.sans, fontSize: 13 }}>

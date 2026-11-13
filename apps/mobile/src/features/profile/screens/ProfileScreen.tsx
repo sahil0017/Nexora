@@ -305,6 +305,18 @@ export default function ProfileScreen() {
       />
       <FadeIn index={2}>
         <Card style={{ gap: spacing.s }}>
+          <Tappable onPress={() => nav.navigate('Integrations')} style={styles.between}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Real-Time Integrations & Auto-Sync</Text>
+              <Text style={styles.sub}>
+                Auto-ingest Mobility GPS, Wealth alerts, Health sensors & Voice calls
+              </Text>
+            </View>
+            <Text style={[styles.chevron, { color: colors.navBlue }]}>Connect ›</Text>
+          </Tappable>
+
+          <View style={styles.divider} />
+
           <Tappable onPress={() => nav.navigate('PrivacyPermissions')} style={styles.between}>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Privacy & Data Access Permissions</Text>

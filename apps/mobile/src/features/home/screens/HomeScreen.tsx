@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import { healthApi } from '../../../core/api/health';
 import { voiceApi } from '../../../core/api/voice';
 import { useMe } from '../../../core/auth/useMe';
 import { useLocation } from '../../../core/location/useLocation';
+import { useRealtimeIntegrations } from '../../../core/integrations/useRealtimeIntegrations';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
 import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
 import { HealthMetricBar, SparklineChart } from '../../health/components/HealthVisualizations';
@@ -155,6 +156,13 @@ export default function HomeScreen() {
   const openHealth = (screen?: 'HealthHub' | 'SleepClearance' | 'SensorStream' | 'MriValidation') =>
     nav.navigate('Health', screen ? { screen } : undefined);
 
+  const integrations = useRealtimeIntegrations();
+  const connectedSources = Object.values(integrations.domains).filter(d => d.status === 'connected').length;
+
+  useEffect(() => {
+    void integrations.runAutoSyncOnLaunch();
+  }, [integrations.runAutoSyncOnLaunch]);
+
   return (
     <Screen
       title={greeting()}
@@ -185,6 +193,24 @@ export default function HomeScreen() {
           </Card>
         </FadeIn>
       ) : null}
+
+      {/* Live Data Integrations Quick Card */}
+      <FadeIn index={0}>
+        <Tappable onPress={() => nav.navigate('Integrations')} accessibilityLabel="Open Real-Time Integrations">
+          <Card variant="subtle" style={{ gap: 6, marginBottom: spacing.m, borderColor: 'rgba(45, 212, 191, 0.3)' }}>
+            <View style={styles.between}>
+              <Text style={styles.mobilityHeading}>Real-Time Integrations</Text>
+              <StatusPill
+                label={`${connectedSources} / 4 LIVE`}
+                tone={connectedSources > 0 ? 'success' : 'info'}
+              />
+            </View>
+            <Text style={styles.mobilitySub} numberOfLines={2}>
+              Auto-sync Mobility GPS, Wealth alerts, Health sensors & Voice calls without manual entry.
+            </Text>
+          </Card>
+        </Tappable>
+      </FadeIn>
 
       {/* Flagship Mobility & Navigation Entry Card */}
       <SectionHeading title="Commute & navigation" action="Open map →" onActionPress={() => openMobility('Navigate')} />
