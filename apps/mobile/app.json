@@ -1,9 +1,15 @@
 {
   "expo": {
-    "name": "NEXORA MoveSmart",
+    "name": "NEXORA",
     "slug": "nexora-movesmart",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#070B14"
+    },
     "scheme": "nexora",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -18,6 +24,10 @@
     },
     "android": {
       "package": "ai.nexora.movesmart",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#070B14"
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
