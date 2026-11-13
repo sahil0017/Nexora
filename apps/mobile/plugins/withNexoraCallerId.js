@@ -17,9 +17,19 @@ const IOS_APP_GROUP = 'group.ai.nexora.movesmart.callerid';
  * `expo prebuild` / `eas build`.
  */
 module.exports = function withNexoraCallerId(config) {
-  // 1. Android: CallScreeningService manifest entry
+  // 1. Android: CallScreeningService manifest entry + READ_SMS permission
   config = withAndroidManifest(config, cfg => {
-    const mainApp = cfg.modResults.manifest.application?.[0];
+    const manifest = cfg.modResults.manifest;
+    manifest['uses-permission'] = manifest['uses-permission'] || [];
+    const hasReadSms = manifest['uses-permission'].some(
+      p => p.$?.['android:name'] === 'android.permission.READ_SMS',
+    );
+    if (!hasReadSms) {
+      manifest['uses-permission'].push({
+        $: { 'android:name': 'android.permission.READ_SMS' },
+      });
+    }
+    const mainApp = manifest.application?.[0];
     if (mainApp) {
       mainApp.service = mainApp.service || [];
       const hasService = mainApp.service.some(
