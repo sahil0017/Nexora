@@ -6,6 +6,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Build
 import android.os.SystemClock
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
@@ -212,11 +213,23 @@ class NexoraHealthSensorsModule(private val reactContext: ReactApplicationContex
         val granted = client.permissionController.getGrantedPermissions()
         val hasHr = granted.contains(HealthPermission.getReadPermission(HeartRateRecord::class))
         if (!hasHr && granted.intersect(requiredPerms).isEmpty()) {
-          // Open Health Connect permissions screen so the user can grant access on-device
-          val intent = Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          // Open Health Connect permissions screen directly for NEXORA on Android 14+ (API 34+)
+          val intent = if (Build.VERSION.SDK_INT >= 34) {
+            Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS").apply {
+              putExtra(Intent.EXTRA_PACKAGE_NAME, reactContext.packageName)
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+          } else {
+            Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS).apply {
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
           }
-          runCatching { reactContext.startActivity(intent) }
+          runCatching { reactContext.startActivity(intent) }.onFailure {
+            val fallback = Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS).apply {
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            runCatching { reactContext.startActivity(fallback) }
+          }
 
           val out = Arguments.createMap().apply {
             putString("signal_source", "health_connect")

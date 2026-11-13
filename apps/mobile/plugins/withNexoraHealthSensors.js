@@ -84,6 +84,30 @@ module.exports = function withNexoraHealthSensors(config) {
       }
     }
 
+    // Android 14+ (API 34+) requires ViewPermissionUsageActivity activity-alias for Health Connect to list the app
+    if (mainApp) {
+      mainApp['activity-alias'] = mainApp['activity-alias'] || [];
+      const hasAlias = mainApp['activity-alias'].some(
+        a => a.$?.['android:name'] === 'ViewPermissionUsageActivity',
+      );
+      if (!hasAlias) {
+        mainApp['activity-alias'].push({
+          $: {
+            'android:name': 'ViewPermissionUsageActivity',
+            'android:exported': 'true',
+            'android:targetActivity': '.MainActivity',
+            'android:permission': 'android.permission.START_VIEW_PERMISSION_USAGE',
+          },
+          'intent-filter': [
+            {
+              action: [{ $: { 'android:name': 'android.intent.action.VIEW_PERMISSION_USAGE' } }],
+              category: [{ $: { 'android:name': 'android.intent.category.HEALTH_PERMISSIONS' } }],
+            },
+          ],
+        });
+      }
+    }
+
     return cfg;
   });
 
