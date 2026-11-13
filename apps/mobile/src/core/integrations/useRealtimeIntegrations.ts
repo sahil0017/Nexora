@@ -1,4 +1,4 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import * as Location from 'expo-location';
 import { create } from 'zustand';
 import { financeApi } from '../api/finance';
@@ -6,7 +6,12 @@ import { healthApi, type ProvenancedFeature } from '../api/health';
 import { digitalTwinApi, moveApi } from '../api/move';
 import { voiceApi } from '../api/voice';
 import { fetchDeviceCallLogs, syncIosContactsWithConsent } from '../native/callerIdBridge';
-import { nativeHealthSensors } from '../native/healthSensorsBridge';
+import {
+  isNativeHealthSensorsAvailable,
+  nativeHealthSensors,
+  type WearableBridgeStatus,
+  type WearableHealthMetrics,
+} from '../native/healthSensorsBridge';
 import { usePrivacyPermissions } from '../permissions/usePrivacyPermissions';
 
 export type IntegrationDomain = 'mobility' | 'finance' | 'health' | 'voice';
@@ -41,6 +46,16 @@ function nowIso(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+let mobilityWatchSub: Location.LocationSubscription | null = null;
+let mobilityIngestedTotal = 0;
+
+function stopMobilityWatch() {
+  if (mobilityWatchSub) {
+    mobilityWatchSub.remove();
+    mobilityWatchSub = null;
+  }
+}
+
 export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => ({
   autoSyncEnabled: true,
   hasAutoSyncedOnLaunch: false,
@@ -52,7 +67,10 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
     voice: { ...INITIAL_DOMAIN, summary: 'Device call logs, contacts & caller ID' },
   },
 
-  setAutoSyncEnabled: enabled => set({ autoSyncEnabled: enabled }),
+  setAutoSyncEnabled: enabled => {
+    if (!enabled) stopMobilityWatch();
+    set({ autoSyncEnabled: enabled });
+  },
 
   syncDomain: async domain => {
     set(state => ({
@@ -85,37 +103,105 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
         const lastKnown = await Location.getLastKnownPositionAsync();
         const pos =
           lastKnown ??
-          (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+          (await Promise.race([
+            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('GPS fix timed out — enable device Location')), 10000),
+            ),
+          ]));
         const pt = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-        await digitalTwinApi.sendPrivacyTelemetry([
+        const telemetryRes = (await digitalTwinApi.sendPrivacyTelemetry([
           {
             latitude: pt.latitude,
             longitude: pt.longitude,
             speed_kph: pos.coords.speed != null && pos.coords.speed >= 0 ? pos.coords.speed * 3.6 : 0,
           },
-        ]);
-        const [segs, haz] = await Promise.all([
+        ])) as { input_samples?: number; published_count?: number; suppressed_count?: number };
+        mobilityIngestedTotal += telemetryRes.input_samples ?? 1;
+        const [segsRes, hazRes] = await Promise.allSettled([
           moveApi.trafficSegments(pt, 3000),
           moveApi.nearbyHazards(pt),
         ]);
-        const count = (segs.segments?.length ?? 0) + (haz.hazards?.length ?? 0);
+        const segCount = segsRes.status === 'fulfilled' ? (segsRes.value.segments?.length ?? 0) : 0;
+        const hazCount = hazRes.status === 'fulfilled' ? (hazRes.value.hazards?.length ?? 0) : 0;
         set(state => ({
           domains: {
             ...state.domains,
             mobility: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary: `${segs.segments?.length ?? 0} corridors · ${haz.hazards?.length ?? 0} road alerts synced`,
-              recordsSynced: count,
+              summary: `${mobilityIngestedTotal} live GPS fix(es) · ${segCount} corridors · ${hazCount} alerts`,
+              recordsSynced: mobilityIngestedTotal + segCount + hazCount,
             },
           },
         }));
+
+        // Start continuous real-time GPS watcher when autoSyncEnabled is on
+        if (get().autoSyncEnabled && !mobilityWatchSub && Platform.OS !== 'web') {
+          try {
+            mobilityWatchSub = await Location.watchPositionAsync(
+              {
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: 20000,
+                distanceInterval: 25,
+              },
+              async loc => {
+                if (!get().autoSyncEnabled) {
+                  stopMobilityWatch();
+                  return;
+                }
+                try {
+                  const livePt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+                  const res = (await digitalTwinApi.sendPrivacyTelemetry([
+                    {
+                      latitude: livePt.latitude,
+                      longitude: livePt.longitude,
+                      speed_kph: loc.coords.speed != null && loc.coords.speed >= 0 ? loc.coords.speed * 3.6 : 0,
+                    },
+                  ])) as { input_samples?: number };
+                  mobilityIngestedTotal += res.input_samples ?? 1;
+                  const [sRes, hRes] = await Promise.allSettled([
+                    moveApi.trafficSegments(livePt, 3000),
+                    moveApi.nearbyHazards(livePt),
+                  ]);
+                  const sc = sRes.status === 'fulfilled' ? (sRes.value.segments?.length ?? 0) : 0;
+                  const hc = hRes.status === 'fulfilled' ? (hRes.value.hazards?.length ?? 0) : 0;
+                  set(state => ({
+                    domains: {
+                      ...state.domains,
+                      mobility: {
+                        status: 'connected',
+                        lastSyncAt: nowIso(),
+                        summary: `${mobilityIngestedTotal} live GPS fix(es) · ${sc} corridors · ${hc} alerts`,
+                        recordsSynced: mobilityIngestedTotal + sc + hc,
+                      },
+                    },
+                  }));
+                } catch {
+                  // Keep watcher alive across transient network blips
+                }
+              },
+            );
+          } catch {
+            // Watcher optional if OS restricts background/continuous updates
+          }
+        }
         return;
       }
 
       if (domain === 'finance') {
-        perms.setPermission('smsAlertIngestion', true);
+        let smsGranted = Platform.OS !== 'android';
+        if (Platform.OS === 'android') {
+          try {
+            const res = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_SMS);
+            smsGranted = res === PermissionsAndroid.RESULTS.GRANTED;
+          } catch {
+            smsGranted = false;
+          }
+        }
+        perms.setPermission('smsAlertIngestion', smsGranted);
         perms.setPermission('aiCfoTelemetry', true);
+
         const existing = await financeApi.channels();
         let channelsCount = existing.channels?.length ?? 0;
         if (channelsCount === 0) {
@@ -130,21 +216,56 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           });
           channelsCount = 1;
         }
-        const [twin, accts, txns] = await Promise.all([
+
+        let ingestedSms = 0;
+        if (Platform.OS === 'android' && smsGranted) {
+          const smsReader =
+            (NativeModules.NexoraCallerIdModule as {
+              readDeviceBankSms?: (limit: number) => Promise<{ messages?: { sender: string; body: string; timestamp_ms: number }[] }>;
+            } | undefined) ??
+            (NativeModules.NexoraSmsReader as {
+              readDeviceBankSms?: (limit: number) => Promise<{ messages?: { sender: string; body: string; timestamp_ms: number }[] }>;
+            } | undefined);
+          if (typeof smsReader?.readDeviceBankSms === 'function') {
+            try {
+              const smsBatch = await smsReader.readDeviceBankSms(30);
+              const alerts = (smsBatch?.messages ?? [])
+                .filter(m => Boolean(m.body?.trim()))
+                .map(m => ({
+                  source_channel: 'android_notification' as const,
+                  raw_text: `${m.sender ? `[${m.sender}] ` : ''}${m.body}`,
+                }));
+              if (alerts.length > 0) {
+                const synced = await financeApi.smartSyncBatch({ alerts });
+                ingestedSms = synced.ingested_alerts ?? alerts.length;
+              }
+            } catch {
+              // Native SMS batch optional if current binary predates reader
+            }
+          }
+        }
+
+        const [twinRes, acctsRes, txnsRes] = await Promise.allSettled([
           financeApi.digitalTwin(),
           financeApi.accounts(),
           financeApi.transactions(10),
         ]);
-        const acctCount = accts.count ?? accts.accounts?.length ?? 0;
-        const txnCount = txns.count ?? txns.transactions?.length ?? 0;
+        const score = twinRes.status === 'fulfilled' ? twinRes.value.health_score : '--';
+        const acctCount =
+          acctsRes.status === 'fulfilled' ? (acctsRes.value.count ?? acctsRes.value.accounts?.length ?? 0) : 0;
+        const txnCount =
+          txnsRes.status === 'fulfilled' ? (txnsRes.value.count ?? txnsRes.value.transactions?.length ?? 0) : 0;
         set(state => ({
           domains: {
             ...state.domains,
             finance: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary: `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${twin.health_score}/100`,
-              recordsSynced: channelsCount + acctCount + txnCount,
+              summary:
+                ingestedSms > 0
+                  ? `${ingestedSms} SMS alerts ingested · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`
+                  : `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`,
+              recordsSynced: channelsCount + ingestedSms + acctCount + txnCount,
             },
           },
         }));
@@ -153,65 +274,156 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
 
       if (domain === 'health') {
         perms.setPermission('healthDeviceSensors', true);
-        const bridge = nativeHealthSensors?.getHealthBridgeStatus
-          ? await nativeHealthSensors.getHealthBridgeStatus()
-          : null;
-        const metrics = nativeHealthSensors?.fetchAuthorizedWearableMetrics
-          ? await nativeHealthSensors.fetchAuthorizedWearableMetrics(24)
-          : null;
-
-        let ingested = 0;
-        if (metrics && metrics.measurement_status === 'measured') {
-          const features: Record<string, ProvenancedFeature> = {};
-          if (metrics.hrv_rmssd_ms != null) {
-            features.hrv_rmssd_ms = {
-              name: 'hrv_rmssd_ms',
-              value: metrics.hrv_rmssd_ms,
-              unit: 'ms',
-              provenance: {
-                source_device: Platform.OS,
-                signal_source: metrics.signal_source,
-                sampling_rate_hz: 1,
-                timestamp_accuracy_ms: 1000,
-                placement_protocol: 'wearable_bridge',
-                calibration_status: 'os_authorized',
-                signal_quality_score: 0.9,
-                measurement_status: 'measured',
-                algorithm_version: 'health_bridge_v1',
-              },
-            };
-          }
-          if (Object.keys(features).length > 0) {
-            await healthApi.ingestFeatures({
-              hardware_tier: 'wearable_ppg_imu',
-              sample_rate_hz: 1,
-              is_simulated: false,
-              device_timestamp_ms: Date.now(),
-              monotonic_ms: Date.now(),
-              sync_uncertainty_ms: 500,
-              extracted_features: features,
-            });
-            ingested = Object.keys(features).length;
+        let bridge: WearableBridgeStatus | null = null;
+        if (nativeHealthSensors?.getHealthBridgeStatus) {
+          try {
+            bridge = await nativeHealthSensors.getHealthBridgeStatus();
+          } catch {
+            bridge = null;
           }
         }
-        const [sessions, streams] = await Promise.all([
+
+        let metrics: WearableHealthMetrics | null = null;
+        if (nativeHealthSensors?.fetchAuthorizedWearableMetrics) {
+          try {
+            metrics = await nativeHealthSensors.fetchAuthorizedWearableMetrics(24);
+          } catch {
+            metrics = null;
+          }
+        }
+
+        let ingested = 0;
+        let imuSamples = 0;
+        const features: Record<string, ProvenancedFeature> = {};
+
+        if (metrics && metrics.measurement_status === 'measured' && metrics.hrv_rmssd_ms != null) {
+          features.hrv_rmssd_ms = {
+            name: 'hrv_rmssd_ms',
+            value: metrics.hrv_rmssd_ms,
+            unit: 'ms',
+            provenance: {
+              source_device: Platform.OS,
+              signal_source: metrics.signal_source,
+              sampling_rate_hz: 1,
+              timestamp_accuracy_ms: 1000,
+              placement_protocol: 'wearable_bridge',
+              calibration_status: 'os_authorized',
+              signal_quality_score: 0.9,
+              measurement_status: 'measured',
+              algorithm_version: 'health_bridge_v1',
+            },
+          };
+        }
+
+        // Capture a short real device IMU burst so phone motion/posture is ingested even without a wearable
+        if (Platform.OS !== 'web' && isNativeHealthSensorsAvailable() && nativeHealthSensors) {
+          try {
+            await nativeHealthSensors.startCollection(25);
+            await new Promise(resolve => setTimeout(resolve, 900));
+            const batch = await nativeHealthSensors.drainFeatureBatch();
+            await nativeHealthSensors.stopCollection().catch(() => {});
+            imuSamples = batch?.sample_count ?? 0;
+            if (imuSamples > 0) {
+              features.actigraphy_rms = {
+                name: 'actigraphy_rms',
+                value: Number((batch.actigraphy_rms ?? 0).toFixed(4)),
+                unit: 'm/s^2',
+                provenance: {
+                  source_device: Platform.OS,
+                  signal_source: 'phone_imu',
+                  sampling_rate_hz: 25,
+                  timestamp_accuracy_ms: 40,
+                  placement_protocol: batch.device_orientation || 'handheld',
+                  calibration_status: 'factory',
+                  signal_quality_score: 0.92,
+                  measurement_status: 'measured',
+                  algorithm_version: 'nexora_imu_v1',
+                },
+              };
+            }
+          } catch {
+            // Fall through if native sensor ring buffer is unavailable
+          }
+        }
+
+        if (imuSamples === 0 && Platform.OS !== 'web') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const expoSensors = require('expo-sensors') as {
+              Accelerometer?: {
+                setUpdateInterval: (ms: number) => void;
+                addListener: (cb: (d: { x: number; y: number; z: number }) => void) => { remove: () => void };
+              };
+            };
+            if (expoSensors?.Accelerometer) {
+              const mags: number[] = [];
+              expoSensors.Accelerometer.setUpdateInterval(50);
+              const sub = expoSensors.Accelerometer.addListener(d => {
+                mags.push(Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z) * 9.81);
+              });
+              await new Promise(resolve => setTimeout(resolve, 800));
+              sub.remove();
+              imuSamples = mags.length;
+              if (mags.length > 0) {
+                const mean = mags.reduce((a, b) => a + b, 0) / mags.length;
+                const rms = Math.sqrt(mags.reduce((a, m) => a + (m - mean) ** 2, 0) / mags.length);
+                features.actigraphy_rms = {
+                  name: 'actigraphy_rms',
+                  value: Number(rms.toFixed(4)),
+                  unit: 'm/s^2',
+                  provenance: {
+                    source_device: Platform.OS,
+                    signal_source: 'phone_imu',
+                    sampling_rate_hz: 20,
+                    timestamp_accuracy_ms: 50,
+                    placement_protocol: 'handheld',
+                    calibration_status: 'factory',
+                    signal_quality_score: 0.88,
+                    measurement_status: 'measured',
+                    algorithm_version: 'expo_imu_v1',
+                  },
+                };
+              }
+            }
+          } catch {
+            // Ignore if expo-sensors is not linked
+          }
+        }
+
+        if (Object.keys(features).length > 0) {
+          await healthApi.ingestFeatures({
+            hardware_tier: metrics?.measurement_status === 'measured' ? 'wearable_ppg_imu' : 'consumer_phone_sensors',
+            sample_rate_hz: imuSamples > 0 ? 25 : 1,
+            is_simulated: false,
+            device_timestamp_ms: Date.now(),
+            monotonic_ms: Date.now(),
+            sync_uncertainty_ms: 50,
+            extracted_features: features,
+          });
+          ingested = Object.keys(features).length;
+        }
+
+        const [sessionsRes, streamsRes] = await Promise.allSettled([
           healthApi.listSleepSessions('default-user', 5),
           healthApi.listLatestFeatures('default-user', 5),
         ]);
-        const total = sessions.sessions?.length ?? 0;
-        const streamCount = streams.streams?.length ?? 0;
-        const isLive = Boolean(bridge?.available || ingested > 0 || streamCount > 0 || total > 0);
+        const total = sessionsRes.status === 'fulfilled' ? (sessionsRes.value.sessions?.length ?? 0) : 0;
+        const streamCount = streamsRes.status === 'fulfilled' ? (streamsRes.value.streams?.length ?? 0) : 0;
+        const isLive = Boolean(bridge?.available || ingested > 0 || streamCount > 0 || total > 0 || imuSamples > 0);
+        const bridgeLabel = bridge?.available
+          ? `${bridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'} linked`
+          : imuSamples > 0
+            ? `Phone IMU (${imuSamples} samples)`
+            : 'Sensors ready';
         set(state => ({
           domains: {
             ...state.domains,
             health: {
               status: isLive ? 'connected' : 'needs_access',
               lastSyncAt: nowIso(),
-              summary: bridge?.available
-                ? `${bridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'} linked · ${streamCount} streams · ${total} nights`
-                : streamCount > 0 || total > 0
-                  ? `${streamCount} sensor streams · ${total} sleep nights synced`
-                  : 'Install Health Connect / pair watch or start Live Sensors',
+              summary: isLive
+                ? `${bridgeLabel} · ${streamCount} streams · ${total} nights`
+                : 'Install Health Connect / pair watch or start Live Sensors',
               recordsSynced: ingested + streamCount + total,
             },
           },
@@ -221,6 +433,7 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
 
       if (domain === 'voice') {
         let importedCount = 0;
+        let deviceNote = '';
         if (Platform.OS === 'android') {
           const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_CALL_LOG);
           if (granted === PermissionsAndroid.RESULTS.GRANTED) {
@@ -229,6 +442,8 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             if (res.logs.length > 0) {
               await voiceApi.importCallLogs({ logs: res.logs, source: 'android_call_log' });
               importedCount = res.logs.length;
+            } else if (!res.supported) {
+              deviceNote = ' (native call-log bridge unavailable)';
             }
           } else {
             set(state => ({
@@ -258,7 +473,7 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             voice: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary: `${ov.conversation_count} conversations · ${importedCount} device record(s) synced`,
+              summary: `${ov.conversation_count} conversations · ${importedCount} device record(s) ingested${deviceNote}`,
               recordsSynced: ov.conversation_count + importedCount,
             },
           },
