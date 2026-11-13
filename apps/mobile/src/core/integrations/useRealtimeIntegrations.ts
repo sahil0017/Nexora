@@ -1,4 +1,4 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import * as Location from 'expo-location';
 import { create } from 'zustand';
 import { financeApi } from '../api/finance';
@@ -190,7 +190,66 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
       }
 
       if (domain === 'finance') {
-        perms.setPermission('smsAlertIngestion', true);
+        type NotifBridge = {
+          isNotificationAccessEnabled?: () => Promise<boolean>;
+          openNotificationAccessSettings?: () => Promise<boolean>;
+          drainBankNotifications?: () => Promise<{
+            enabled: boolean;
+            messages: Array<{ sender: string; body: string; timestamp_ms: number }>;
+          }>;
+        };
+        const notifBridge = NativeModules.NexoraCallerIdModule as NotifBridge | undefined;
+
+        let notifGranted = Platform.OS !== 'android';
+        let ingestedAlerts = 0;
+
+        if (Platform.OS === 'android' && typeof notifBridge?.isNotificationAccessEnabled === 'function') {
+          try {
+            notifGranted = await notifBridge.isNotificationAccessEnabled();
+          } catch {
+            notifGranted = false;
+          }
+          if (!notifGranted) {
+            perms.setPermission('smsAlertIngestion', false);
+            try {
+              await notifBridge.openNotificationAccessSettings?.();
+            } catch {
+              // Ignore if settings intent unavailable
+            }
+            set(state => ({
+              domains: {
+                ...state.domains,
+                finance: {
+                  status: 'needs_access',
+                  lastSyncAt: nowIso(),
+                  summary: 'Enable Notification Access for NEXORA to ingest bank & UPI alerts',
+                  recordsSynced: 0,
+                },
+              },
+            }));
+            return;
+          }
+
+          if (typeof notifBridge.drainBankNotifications === 'function') {
+            try {
+              const drained = await notifBridge.drainBankNotifications();
+              const alerts = (drained?.messages ?? [])
+                .filter(m => Boolean(m.body?.trim()))
+                .map(m => ({
+                  source_channel: 'android_notification' as const,
+                  raw_text: m.body,
+                }));
+              if (alerts.length > 0) {
+                const synced = await financeApi.smartSyncBatch({ alerts });
+                ingestedAlerts = synced.ingested_alerts ?? alerts.length;
+              }
+            } catch {
+              // Keep channel/AA sync working even if notification drain fails
+            }
+          }
+        }
+
+        perms.setPermission('smsAlertIngestion', notifGranted);
         perms.setPermission('aiCfoTelemetry', true);
 
         const existing = await financeApi.channels();
@@ -224,8 +283,11 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             finance: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary: `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`,
-              recordsSynced: channelsCount + acctCount + txnCount,
+              summary:
+                ingestedAlerts > 0
+                  ? `${ingestedAlerts} bank alert(s) ingested · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`
+                  : `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`,
+              recordsSynced: channelsCount + ingestedAlerts + acctCount + txnCount,
             },
           },
         }));
