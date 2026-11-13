@@ -1,6 +1,7 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 import { create } from 'zustand';
 import * as Location from 'expo-location';
+import { api } from '../api/client';
 import { requestAndroidScreeningRole } from '../native/callerIdBridge';
 
 export type PermissionKey =
@@ -144,6 +145,7 @@ interface PrivacyPermissionsState {
   applyRecommended: () => void;
   revokeOptional: () => void;
   markReviewed: () => void;
+  hydrateFromServer: () => Promise<void>;
   syncOsPermissions: () => Promise<OsLocationStatus>;
   requestOsLocation: () => Promise<OsLocationStatus>;
   requestOsCallLogs: () => Promise<OsLocationStatus>;
@@ -206,6 +208,21 @@ function persistState(data: {
   } catch {
     // Storage unavailable in private mode
   }
+  const items = PERMISSION_CATALOG.map(desc => ({
+    permission_key: desc.key,
+    domain: desc.domain,
+    granted: Boolean(data.permissions[desc.key]),
+    os_status: 'synced',
+    source: `mobile_${Platform.OS}`,
+  }));
+  void api
+    .post('/api/v1/privacy/permissions', {
+      source: `mobile_${Platform.OS}`,
+      permissions: items,
+    })
+    .catch(() => {
+      // Non-blocking: local state remains intact if offline
+    });
 }
 
 const initial = loadPersisted();
@@ -266,6 +283,31 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
     const payload = { permissions: next, consentConfigured: true, lastUpdatedAt: now };
     persistState(payload);
     set(payload);
+  },
+
+  hydrateFromServer: async () => {
+    try {
+      const res = await api.get<{
+        consent_configured: boolean;
+        last_updated_at?: string;
+        permissions: Array<{ permission_key: string; granted: boolean }>;
+      }>('/api/v1/privacy/permissions');
+      if (res.consent_configured && Array.isArray(res.permissions)) {
+        const merged: PermissionMap = { ...get().permissions };
+        for (const row of res.permissions) {
+          if (row.permission_key in merged) {
+            merged[row.permission_key as PermissionKey] = Boolean(row.granted);
+          }
+        }
+        set({
+          permissions: merged,
+          consentConfigured: true,
+          lastUpdatedAt: res.last_updated_at || get().lastUpdatedAt,
+        });
+      }
+    } catch {
+      // Offline or unauthenticated fallback uses local defaults
+    }
   },
 
   markReviewed: () => {

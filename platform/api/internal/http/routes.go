@@ -17,6 +17,7 @@ import (
 	"github.com/nexora/platform/api/internal/modules/finance"
 	"github.com/nexora/platform/api/internal/modules/health"
 	"github.com/nexora/platform/api/internal/modules/mobility"
+	"github.com/nexora/platform/api/internal/modules/privacy"
 	"github.com/nexora/platform/api/internal/modules/voice"
 	"github.com/nexora/platform/api/internal/platform/cache"
 	"github.com/nexora/platform/api/internal/platform/identity"
@@ -78,6 +79,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 
 		// Health & Sleep-Related Brain Clearance Research module
 		health.Mount(v1, healthSvc)
+
+		// User Privacy & Permissions Persistence module
+		privacy.Mount(v1, privacy.NewHandler(pg))
 
 		// Deep Learning Intelligence Gateway (proxies all 16 architectures to nexora-ml)
 		mountDeepGateway(v1, cfg.MLServiceURL, logger)

@@ -50,7 +50,7 @@ export default function HomeScreen() {
   const nav = useNavigation<any>();
   const me = useMe();
   const loc = useLocation();
-  const { permissions, consentConfigured } = usePrivacyPermissions();
+  const { permissions, consentConfigured, hydrateFromServer } = usePrivacyPermissions();
   const [aiExpanded, setAiExpanded] = useState(false);
 
   const status = useQuery({
@@ -160,8 +160,8 @@ export default function HomeScreen() {
   const connectedSources = Object.values(integrations.domains).filter(d => d.status === 'connected').length;
 
   useEffect(() => {
-    void integrations.runAutoSyncOnLaunch();
-  }, [integrations.runAutoSyncOnLaunch]);
+    void hydrateFromServer().then(() => integrations.runAutoSyncOnLaunch());
+  }, [hydrateFromServer, integrations.runAutoSyncOnLaunch]);
 
   return (
     <Screen
