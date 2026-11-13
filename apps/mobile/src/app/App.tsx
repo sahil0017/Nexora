@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
 import { fontFamily } from './theme/tokens';
 import { BiometricLockGate } from '../core/security/BiometricLockGate';
+import { OtaUpdateBanner } from '../core/updates/OtaUpdateBanner';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 2 } },
@@ -34,6 +35,7 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <BiometricLockGate>
           <RootNavigator />
+          <OtaUpdateBanner />
         </BiometricLockGate>
       </QueryClientProvider>
     </SafeAreaProvider>
