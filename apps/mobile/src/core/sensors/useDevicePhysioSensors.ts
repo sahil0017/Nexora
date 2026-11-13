@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { Alert, AppState, Linking, Platform } from 'react-native';
 import {
   healthApi,
   type HardwareTier,
@@ -487,29 +487,111 @@ export function useDevicePhysioSensors(options?: {
     [autoUpload, flushFeaturesToServer, hardwareTier, pushFrame, sensorAllowed, stop],
   );
 
-  const syncWearableBridge = useCallback(async () => {
+  const syncWearableBridge = useCallback(async (interactive = true) => {
     if (!nativeHealthSensors?.getHealthBridgeStatus || !nativeHealthSensors?.fetchAuthorizedWearableMetrics) {
+      setState(prev => ({
+        ...prev,
+        error:
+          Platform.OS === 'web'
+            ? 'Health Connect / Apple Health requires the mobile app.'
+            : 'Native health bridge is unavailable in this build.',
+      }));
       return null;
     }
-    const status = await nativeHealthSensors.getHealthBridgeStatus();
-    const metrics = await nativeHealthSensors.fetchAuthorizedWearableMetrics(12);
-    void healthApi
-      .registerDevice({
-        device_id: `${Platform.OS}_${status.source}`,
-        signal_source: status.source,
-        capabilities: status.available ? ['heart_rate', 'hrv_ibi', 'respiratory_rate'] : ['unavailable'],
-        calibration_status: status.available ? 'active' : 'unavailable',
-      })
-      .catch(() => {});
-    if (metrics.authorized) {
-      void healthApi.grantConsent({ consent_scope: 'health_device_sensors' }).catch(() => {});
+
+    try {
+      const status = await nativeHealthSensors.getHealthBridgeStatus();
+      const metrics = await nativeHealthSensors.fetchAuthorizedWearableMetrics(12);
+
+      void healthApi
+        .registerDevice({
+          device_id: `${Platform.OS}_${status.source}`,
+          signal_source: status.source,
+          capabilities: status.available ? ['heart_rate', 'hrv_ibi', 'respiratory_rate'] : ['unavailable'],
+          calibration_status: status.available && metrics.authorized ? 'active' : 'unavailable',
+        })
+        .catch(() => {});
+
+      if (metrics.authorized) {
+        void healthApi.grantConsent({ consent_scope: 'health_device_sensors' }).catch(() => {});
+      }
+
+      const bridgeError = !status.available
+        ? Platform.OS === 'android'
+          ? 'Health Connect is not installed or needs an update on this device.'
+          : 'Apple Health is unavailable on this device.'
+        : !metrics.authorized
+          ? metrics.missing_reason === 'health_connect_permission_required'
+            ? 'Health Connect permissions are not granted yet. Allow NEXORA in Health Connect → App permissions.'
+            : metrics.missing_reason ?? 'Health permissions are required to sync wearable data.'
+          : null;
+
+      setState(prev => ({
+        ...prev,
+        wearableBridge: status,
+        wearableMetrics: metrics,
+        error: bridgeError,
+      }));
+
+      if (interactive && Platform.OS === 'android') {
+        if (!status.available) {
+          Alert.alert(
+            'Health Connect Required',
+            'Install or update Google Health Connect to sync Samsung Health and watch metrics.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Open Play Store',
+                onPress: () => {
+                  void Linking.openURL(
+                    'https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata',
+                  ).catch(() => {});
+                },
+              },
+            ],
+          );
+        } else if (!metrics.authorized) {
+          // If native IO-thread intent was suppressed by Android background launch rules,
+          // trigger foreground UI-thread intent fallback after 350ms.
+          setTimeout(() => {
+            if (AppState.currentState !== 'active') return;
+            const openSettingsFallback = async () => {
+              try {
+                if (Number(Platform.Version) >= 34) {
+                  await Linking.sendIntent('android.health.connect.action.MANAGE_HEALTH_PERMISSIONS', [
+                    { key: 'android.intent.extra.PACKAGE_NAME', value: 'ai.nexora.movesmart' },
+                  ]);
+                  return;
+                }
+              } catch {
+                // fall through to general Health Connect settings
+              }
+              try {
+                await Linking.sendIntent('androidx.health.ACTION_HEALTH_CONNECT_SETTINGS');
+                return;
+              } catch {
+                // fall through to alert
+              }
+              Alert.alert(
+                'Enable Health Connect',
+                'Open Settings → Apps → NEXORA or Health Connect → App permissions and allow NEXORA.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+                ],
+              );
+            };
+            void openSettingsFallback();
+          }, 350);
+        }
+      }
+
+      return { status, metrics };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect to Health Connect.';
+      setState(prev => ({ ...prev, error: msg }));
+      return null;
     }
-    setState(prev => ({
-      ...prev,
-      wearableBridge: status,
-      wearableMetrics: metrics,
-    }));
-    return { status, metrics };
   }, []);
 
   useEffect(() => {

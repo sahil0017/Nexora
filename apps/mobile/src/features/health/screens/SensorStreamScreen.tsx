@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
@@ -42,7 +42,18 @@ export default function SensorStreamScreen() {
   const nav = useNavigation<any>();
   const [tier, setTier] = useState<HardwareTier>('consumer_phone_sensors');
   const [motionHistory, setMotionHistory] = useState<number[]>([]);
+  const [isConnectingHealth, setIsConnectingHealth] = useState(false);
   const sensors = useDevicePhysioSensors({ hardwareTier: tier, autoUpload: true });
+
+  useEffect(() => {
+    void sensors.syncWearableBridge(false);
+    const sub = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        void sensors.syncWearableBridge(false);
+      }
+    });
+    return () => sub.remove();
+  }, [sensors.syncWearableBridge]);
 
   useEffect(() => {
     if (!sensors.isStreaming || !sensors.latestFrame) return;
@@ -78,12 +89,14 @@ export default function SensorStreamScreen() {
     {
       key: 'wearable',
       label: healthAppName,
-      status: sensors.wearableBridge?.available ? 'connected' : 'off',
-      detail: sensors.wearableBridge
-        ? sensors.wearableBridge.available
-          ? 'Connected'
-          : 'Not installed'
-        : 'Tap to pair',
+      status: sensors.wearableMetrics?.authorized ? 'connected' : 'off',
+      detail: sensors.wearableMetrics?.authorized
+        ? 'Connected'
+        : sensors.wearableBridge
+          ? sensors.wearableBridge.available
+            ? 'Needs permission'
+            : 'Not installed'
+          : 'Tap to connect',
     },
     {
       key: 'hrv',
@@ -149,9 +162,23 @@ export default function SensorStreamScreen() {
           <View style={styles.btnRow}>
             <View style={{ flex: 1 }}>
               <PrimaryButton
-                title={`Connect ${healthAppName}`}
+                title={
+                  isConnectingHealth
+                    ? `Connecting ${healthAppName}...`
+                    : sensors.wearableMetrics?.authorized
+                      ? `${healthAppName} Connected`
+                      : `Connect ${healthAppName}`
+                }
                 variant="secondary"
-                onPress={() => void sensors.syncWearableBridge()}
+                loading={isConnectingHealth}
+                onPress={() => {
+                  setIsConnectingHealth(true);
+                  void sensors.syncWearableBridge(true).finally(() => {
+                    setIsConnectingHealth(false);
+                    void devicesQuery.refetch();
+                    void telemetryQuery.refetch();
+                  });
+                }}
               />
             </View>
             {sensors.bufferCount > 0 ? (
