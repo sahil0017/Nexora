@@ -4,7 +4,7 @@
 
 ---
 
-## 1. System Architecture Overview
+## 1. High-Level Design (HLD)
 
 NEXORA separates **transactional state, security enforcement, and control plane** (`platform/api`: Go + Chi + PostgreSQL/PostGIS + Redis) from **online learning and deep inference** (`intelligence/ml-platform`: Python + FastAPI + PyTorch), bridged by a **Transactional Outbox → AWS SNS/SQS (or inline HTTP relay) → Idempotent Intelligence Consumer** pipeline, with **Server-Sent Events (SSE)** for real-time client updates.
 
@@ -252,3 +252,37 @@ make mobile-test
 ./scripts/deploy-aws.sh ml        # fast-deploy Python ML service
 ./scripts/deploy-aws.sh status    # stack outputs & live health
 ```
+
+---
+
+## 9. Low-Level Design (LLD)
+
+### 9.1 Mobile Client (`apps/mobile`)
+- **Root Entry (`src/app/App.tsx`)**: `SafeAreaProvider` → `QueryClientProvider` (`staleTime: 30s`, `retry: 2`) → `BiometricLockGate` → `RootNavigator`.
+- **Biometric & Screen Shield (`src/core/security/appSecurity.ts`, `BiometricLockGate.tsx`)**:
+  - Persists `nexora.sec.biometric_lock` & `nexora.sec.screenshot_protect` in `expo-secure-store` (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`).
+  - Checks `LocalAuthentication.hasHardwareAsync() && isEnrolledAsync()` and enforces `ScreenCapture.preventScreenCaptureAsync()` (`FLAG_SECURE` on Android).
+  - `AppState` listener locks on `inactive|background` → `active` when biometric lock is enabled.
+- **Real-Time Integrations Engine (`src/core/integrations/useRealtimeIntegrations.ts`)**:
+  - `syncDomain('mobility')`: requests foreground location, posts to `POST /api/v1/move/privacy/telemetry`, and starts `Location.watchPositionAsync` (`20s` / `25m` intervals) when `autoSyncEnabled` is on.
+  - `syncDomain('health')`: queries Health Connect (`HeartRateRecord`, `HeartRateVariabilityRmssdRecord`, `RespiratoryRateRecord`, `SleepSessionRecord`, `StepsRecord`, `OxygenSaturationRecord`), captures a 900ms phone IMU burst (`startCollection(25)` → `drainFeatureBatch()` → `stopCollection()`), reads `expo-sensors` `LightSensor` & `Pedometer`, and ingests via `POST /api/v1/health/features/ingest` (`is_simulated: false`) + `createSleepSession`.
+  - `syncDomain('finance')`: registers `android_sms` / `ios_shortcut` channel & `account_aggregator` (`Sahamati / Finvu`) consent, fetches `digitalTwin`, `accounts`, `transactions`, alongside zero-permission CSV/PDF import via `expo-document-picker`.
+  - `syncDomain('voice')`: requests `READ_CALL_LOG` on Android (`fetchDeviceCallLogs(50)` → `voiceApi.importCallLogs`) or `CNContactStore` on iOS, plus 24h upcoming events via `expo-calendar`.
+- **Native Bridges (`native/android/`, `plugins/`)**:
+  - `NexoraHealthSensorsModule.kt` (`withNexoraHealthSensors.js`): `SensorManager` ring buffer (`maxBufferSize = 1500`) computing `device_orientation` & `actigraphy_rms`, plus Health Connect SDK (`minSdkVersion = 26`, `connect-client:1.1.0-alpha11`).
+  - `NexoraCallerIdModule.kt` (`withNexoraCallerId.js`): `NexoraCallScreeningService` (`BIND_SCREENING_SERVICE`) and `CallLog.Calls.CONTENT_URI` reader.
+
+### 9.2 Go Control-Plane API (`platform/api`)
+- **HTTP Server (`cmd/server/main.go`)**: `ReadHeaderTimeout: 5s`, `ReadTimeout: 10s`, `WriteTimeout: 30s`, `IdleTimeout: 60s`, `MaxHeaderBytes: 64 KB`.
+- **Chi Middleware Chain (`internal/bootstrap/bootstrap.go`, `security.go`)**:
+  1. `middleware.RequestID` → `middleware.RealIP` → `middleware.Recoverer`
+  2. `securityHeadersMiddleware` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security`, `Content-Security-Policy`, `Cache-Control: no-store` on `/api/*`)
+  3. `maxBodyMiddleware(2 << 20)` (`2 MB` body cap)
+  4. `ipRateLimiter(120, 40)` (per-IP token bucket, exempts `/api/v1/healthz` & `/api/v1/readyz`, returns `429` + `Retry-After: 10`)
+  5. `corsMiddleware`
+- **Route Groups (`internal/http/routes.go`)**: `/api/v1/{healthz,readyz,auth/*,me,documents,assistant/*,move/*,finance/*,health/*,voice/*,privacy/*,deep/*}`.
+- **Outbox Relay (`internal/platform/events/outbox.go`)**: `EnqueueOutbox(tx, ...)` writes to `platform.event_outbox` inside the caller's SQL transaction and signals `NotifyOutbox()`; `OutboxRelay.FlushBatch()` reads up to 25 unpublished rows (`attempts < 10`), publishes to AWS SNS / `POST /v1/events/ingest`, and stamps `published_at`.
+
+### 9.3 Python ML Platform (`intelligence/ml-platform`)
+- **SQS & HTTP Event Consumer (`src/nexora/events/sqs_worker.py`)**: `run_sqs_consumer_loop` (`WaitTimeSeconds=20`, `MaxNumberOfMessages=10`) + `/v1/events/ingest`; `OnlineIntelligenceState.handle_event` deduplicates by `event_id` and updates live traffic, H3 demand, finance, voice, and health buffers.
+- **Deep Learning Suite (`src/nexora/deep_learning/`)**: 16 specialized models across Mobility (7), Finance (6), Voice (5), and Cross-Cutting (`MultiModalUserTwinFusion`, `DriftDetector`).
