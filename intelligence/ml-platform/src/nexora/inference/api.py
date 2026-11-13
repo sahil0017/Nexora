@@ -11,16 +11,18 @@ Implements the 5 Mobility Intelligence Pillars + AWS SQS Event Consumer + 6 Engi
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
 from nexora.assistant.mobility_agent import MobilityAIAssistant
+from nexora.deep_learning import hub
 from nexora.events.sqs_worker import OnlineIntelligenceState, run_sqs_consumer_loop
 from nexora.finance.engine import FinanceIntelligenceNetwork
 from nexora.geospatial.h3_grid import clean_trajectory, discover_hotspots
+from nexora.health import ResearchInferenceEngine, evaluate_cohort_agreement
 from nexora.models.city_digital_twin import CityMovementDigitalTwin, RoadMemoryNetwork
 from nexora.models.demand_forecaster import MobilityDemandForecaster
 from nexora.models.eta_engine import JourneyETAEngine
@@ -29,8 +31,6 @@ from nexora.models.privacy_intelligence import PrivacyPreservingCrowdAggregator
 from nexora.models.traffic_forecaster import SpatioTemporalTrafficForecaster
 from nexora.vision.road_inspector import RoadVisionInspector
 from nexora.voice.engine import VoiceIntelligenceNetwork
-from nexora.health import ResearchInferenceEngine, evaluate_cohort_agreement
-from nexora.deep_learning import hub
 
 traffic_model = SpatioTemporalTrafficForecaster()
 demand_model = MobilityDemandForecaster()
