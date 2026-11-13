@@ -16,7 +16,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-
 from nexora.assistant.mobility_agent import MobilityAIAssistant
 from nexora.deep_learning import hub
 from nexora.events.sqs_worker import OnlineIntelligenceState, run_sqs_consumer_loop
