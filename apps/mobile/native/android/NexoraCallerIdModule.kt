@@ -3,14 +3,10 @@ package com.nexora.voice.callerid
 import android.Manifest
 import android.app.role.RoleManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.CallLog
-import android.provider.Settings
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -123,58 +119,5 @@ class NexoraCallerIdModule(private val reactCtx: ReactApplicationContext) : Reac
         } catch (t: Throwable) {
             promise.reject("CALL_LOG_ERR", t.message, t)
         }
-    }
-
-    @ReactMethod
-    fun isNotificationAccessEnabled(promise: Promise) {
-        val enabled = NotificationManagerCompat.getEnabledListenerPackages(reactCtx)
-            .contains(reactCtx.packageName)
-        promise.resolve(enabled)
-    }
-
-    @ReactMethod
-    fun openNotificationAccessSettings(promise: Promise) {
-        try {
-            val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            reactCtx.startActivity(intent)
-            promise.resolve(true)
-        } catch (t: Throwable) {
-            promise.reject("NOTIF_SETTINGS_ERR", t.message, t)
-        }
-    }
-
-    @ReactMethod
-    fun drainBankNotifications(promise: Promise) {
-        val enabled = NotificationManagerCompat.getEnabledListenerPackages(reactCtx)
-            .contains(reactCtx.packageName)
-        val out = Arguments.createMap()
-        out.putBoolean("enabled", enabled)
-        val messages = Arguments.createArray()
-        if (enabled) {
-            val prefs = reactCtx.getSharedPreferences(
-                NexoraBankNotificationListener.PREFS_NAME,
-                Context.MODE_PRIVATE,
-            )
-            val raw = prefs.getString(NexoraBankNotificationListener.KEY_QUEUE, "[]") ?: "[]"
-            val arr = try {
-                JSONArray(raw)
-            } catch (_: Throwable) {
-                JSONArray()
-            }
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                val row = Arguments.createMap().apply {
-                    putString("sender", obj.optString("sender", "BANK"))
-                    putString("body", obj.optString("body", ""))
-                    putDouble("timestamp_ms", obj.optDouble("timestamp_ms", System.currentTimeMillis().toDouble()))
-                }
-                messages.pushMap(row)
-            }
-            prefs.edit().putString(NexoraBankNotificationListener.KEY_QUEUE, "[]").apply()
-        }
-        out.putArray("messages", messages)
-        promise.resolve(out)
     }
 }

@@ -39,24 +39,6 @@ module.exports = function withNexoraCallerId(config) {
           ],
         });
       }
-      const hasNotifListener = mainApp.service.some(
-        s => s.$?.['android:name'] === 'com.nexora.voice.callerid.NexoraBankNotificationListener',
-      );
-      if (!hasNotifListener) {
-        mainApp.service.push({
-          $: {
-            'android:name': 'com.nexora.voice.callerid.NexoraBankNotificationListener',
-            'android:label': 'NEXORA Bank & UPI Alerts',
-            'android:permission': 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE',
-            'android:exported': 'true',
-          },
-          'intent-filter': [
-            {
-              action: [{ $: { 'android:name': 'android.service.notification.NotificationListenerService' } }],
-            },
-          ],
-        });
-      }
     }
     return cfg;
   });
@@ -89,7 +71,6 @@ module.exports = function withNexoraCallerId(config) {
       fs.mkdirSync(targetDir, { recursive: true });
       for (const fname of [
         'NexoraCallScreeningService.kt',
-        'NexoraBankNotificationListener.kt',
         'NexoraCallerIdModule.kt',
         'NexoraCallerIdPackage.kt',
       ]) {
