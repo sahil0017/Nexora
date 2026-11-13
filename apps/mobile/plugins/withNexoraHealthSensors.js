@@ -3,6 +3,7 @@ const path = require('path');
 const {
   withAndroidManifest,
   withAppBuildGradle,
+  withGradleProperties,
   withMainApplication,
   withDangerousMod,
   withEntitlementsPlist,
@@ -84,7 +85,24 @@ module.exports = function withNexoraHealthSensors(config) {
     return cfg;
   });
 
-  // 4. Android: Add androidx.health.connect:connect-client + coroutines to app/build.gradle
+  // 4. Android: Bump minSdkVersion to 26 (required by androidx.health.connect:connect-client)
+  config = withGradleProperties(config, cfg => {
+    const existing = cfg.modResults.find(
+      item => item.type === 'property' && item.key === 'android.minSdkVersion',
+    );
+    if (existing) {
+      existing.value = '26';
+    } else {
+      cfg.modResults.push({
+        type: 'property',
+        key: 'android.minSdkVersion',
+        value: '26',
+      });
+    }
+    return cfg;
+  });
+
+  // 4b. Android: Add androidx.health.connect:connect-client + coroutines to app/build.gradle
   config = withAppBuildGradle(config, cfg => {
     let contents = cfg.modResults.contents;
     if (!contents.includes('androidx.health.connect:connect-client')) {

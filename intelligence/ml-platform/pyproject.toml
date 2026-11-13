@@ -17,7 +17,7 @@ geospatial = ["h3>=4.1.0", "osmnx>=2.0.0", "geopandas>=1.0.0", "movingpandas>=0.
 ml = ["torch>=2.5.0", "lightgbm>=4.5.0", "catboost>=1.2.7", "u8darts>=0.31.0", "river>=0.22.0", "hdbscan>=0.8.40"]
 vision = ["onnxruntime>=1.20.0", "opencv-python-headless>=4.10.0"]
 agents = ["langgraph>=0.2.0", "haystack-ai>=2.7.0"]
-dev = ["pytest>=8.0.0", "ruff>=0.7.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.7.0", "httpx>=0.27.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
