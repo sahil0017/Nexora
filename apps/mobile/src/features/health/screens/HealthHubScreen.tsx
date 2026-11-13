@@ -1,11 +1,20 @@
-import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
 import { healthApi } from '../../../core/api/health';
 import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
 import { StatusPill } from '../../../core/design-system/motion';
+import {
+  computeReadiness,
+  defaultCheckIn,
+  loadTodayCheckIn,
+  saveTodayCheckIn,
+  type DailyCheckIn,
+  type VitalsSnapshot,
+} from '../../../core/health/dailyWellness';
+import { nativeHealthSensors } from '../../../core/native/healthSensorsBridge';
 import { Screen } from '../../../shared/components/Screen';
 import { HealthMetricBar, SparklineChart } from '../components/HealthVisualizations';
 
@@ -38,6 +47,57 @@ const HEALTH_SUBMODULES = [
 
 export default function HealthHubScreen() {
   const nav = useNavigation<any>();
+  const [checkIn, setCheckIn] = useState<DailyCheckIn>(defaultCheckIn);
+  const [vitals, setVitals] = useState<VitalsSnapshot>({});
+
+  useEffect(() => {
+    void loadTodayCheckIn().then(setCheckIn);
+    (async () => {
+      const next: VitalsSnapshot = {};
+      if (nativeHealthSensors?.fetchAuthorizedWearableMetrics) {
+        try {
+          const m = await nativeHealthSensors.fetchAuthorizedWearableMetrics(24);
+          if (m.authorized) {
+            next.heartRateBpm = m.heart_rate_bpm;
+            next.hrvMs = m.hrv_rmssd_ms;
+            next.steps = m.steps_count;
+            next.sleepHours = m.sleep_duration_hours;
+            next.spo2Pct = m.spo2_pct;
+          }
+        } catch {
+          // Ignore if Health Connect / HealthKit is not authorized yet
+        }
+      }
+      if (next.steps == null && Platform.OS !== 'web') {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const expoSensors = require('expo-sensors') as {
+            Pedometer?: {
+              isAvailableAsync: () => Promise<boolean>;
+              getStepCountAsync: (s: Date, e: Date) => Promise<{ steps: number }>;
+            };
+          };
+          if (expoSensors?.Pedometer && (await expoSensors.Pedometer.isAvailableAsync())) {
+            const end = new Date();
+            const start = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+            const res = await expoSensors.Pedometer.getStepCountAsync(start, end);
+            next.steps = res.steps;
+          }
+        } catch {
+          // Pedometer optional
+        }
+      }
+      setVitals(next);
+    })();
+  }, []);
+
+  const updateCheckIn = (patch: Partial<DailyCheckIn>) => {
+    setCheckIn(prev => {
+      const updated: DailyCheckIn = { ...prev, ...patch, updatedAt: new Date().toISOString() };
+      void saveTodayCheckIn(updated);
+      return updated;
+    });
+  };
 
   const submodulesQuery = useQuery({
     queryKey: ['health', 'submodules'],
@@ -66,63 +126,161 @@ export default function HealthHubScreen() {
     .map(s => s.research_estimate?.value ?? 0)
     .filter(v => v > 0);
 
-  const qualityScore = latestSession?.evidence?.signal_quality_score ?? 0;
-  const totalSessions = telemetryQuery.data?.sessions_count ?? sessions.length;
-  const totalStreams = telemetryQuery.data?.queue?.processed ?? featuresQuery.data?.streams?.length ?? 0;
+  const readiness = useMemo(
+    () =>
+      computeReadiness(checkIn, {
+        ...vitals,
+        sleepIndex: latestSession?.research_estimate?.value ?? null,
+      }),
+    [checkIn, vitals, latestSession],
+  );
 
   const guardrail =
     submodulesQuery.data?.claim_guardrail ??
-    'Research surrogate only. NEXORA never claims to measure or improve brain waste clearance from ordinary smartwatch sleep scores or standalone smartphone sensors.';
+    'Wellness guidance only. NEXORA does not diagnose, treat, or claim clinical brain waste clearance from consumer sensors.';
 
   return (
     <Screen
       title="NEXORA Health"
-      subtitle="Sleep physiology, connected sensors & visual trends"
-      badge="HEALTH">
+      subtitle="Daily readiness, vitals & actionable recovery plan"
+      badge="HEALTH · DAILY COACH">
       <View style={styles.content}>
-        {/* Visual Health Snapshot */}
+        {/* Consumer Daily Readiness Hero */}
         <Card variant="featured" style={styles.heroCard}>
           <View style={styles.rowBetween}>
-            <Text style={styles.heroTitle}>Health Snapshot</Text>
+            <Text style={styles.heroTitle}>Today’s Readiness</Text>
             <StatusPill
-              label={latestSession ? 'LIVE DATA' : 'READY'}
-              tone={latestSession ? 'success' : 'info'}
+              label={`${readiness.score} / 100 · ${readiness.band.toUpperCase()}`}
+              tone={readiness.score >= 70 ? 'success' : readiness.score >= 50 ? 'info' : 'warning'}
             />
           </View>
+          <Text style={styles.headlineText}>{readiness.headline}</Text>
 
           <View style={styles.kpiRow}>
             <View style={styles.kpiBox}>
               <Text style={styles.kpiVal}>
-                {latestSession ? latestSession.research_estimate.value.toFixed(2) : '—'}
+                {(vitals.sleepHours ?? checkIn.sleepHours).toFixed(1)}h
               </Text>
-              <Text style={styles.kpiLbl}>Sleep Index</Text>
+              <Text style={styles.kpiLbl}>Sleep</Text>
             </View>
             <View style={styles.kpiBox}>
-              <Text style={styles.kpiVal}>{totalSessions}</Text>
-              <Text style={styles.kpiLbl}>Nights Logged</Text>
+              <Text style={styles.kpiVal}>
+                {vitals.heartRateBpm != null ? `${Math.round(vitals.heartRateBpm)}` : '—'}
+              </Text>
+              <Text style={styles.kpiLbl}>Heart Rate</Text>
             </View>
             <View style={styles.kpiBox}>
-              <Text style={styles.kpiVal}>{totalStreams}</Text>
-              <Text style={styles.kpiLbl}>Sensor Syncs</Text>
+              <Text style={styles.kpiVal}>
+                {vitals.steps != null ? vitals.steps.toLocaleString() : `${checkIn.waterGlasses}/8`}
+              </Text>
+              <Text style={styles.kpiLbl}>{vitals.steps != null ? 'Steps' : 'Water'}</Text>
             </View>
           </View>
 
-          <SparklineChart
-            values={sparkValues}
-            height={58}
-            emptyLabel="Log a sleep session to view your overnight trend"
-          />
-
-          {latestSession ? (
+          {vitals.steps != null ? (
             <HealthMetricBar
-              label="Latest Signal Quality"
-              valueLabel={`${Math.round(qualityScore * 100)}%`}
-              progress={qualityScore}
+              label="Daily Step Goal"
+              valueLabel={`${vitals.steps.toLocaleString()} / 8,000`}
+              progress={Math.min(1, vitals.steps / 8000)}
+            />
+          ) : (
+            <HealthMetricBar
+              label="Daily Hydration"
+              valueLabel={`${checkIn.waterGlasses} / 8 glasses`}
+              progress={Math.min(1, checkIn.waterGlasses / 8)}
+            />
+          )}
+
+          {sparkValues.length > 1 ? (
+            <SparklineChart
+              values={sparkValues}
+              height={48}
+              emptyLabel="Log sleep nights to view recovery trend"
             />
           ) : null}
         </Card>
 
-        <SectionHeading title="Health Areas" />
+        {/* 1-Tap Daily Check-In (Works with or without a watch) */}
+        <SectionHeading title="1-Tap Daily Check-In" />
+        <Card style={{ gap: spacing.s }}>
+          <Text style={styles.subDesc}>
+            Keep your readiness & daily plan accurate even without a smartwatch:
+          </Text>
+
+          <Text style={styles.chipLabel}>Last Night’s Sleep</Text>
+          <View style={styles.chipRow}>
+            {[5, 6, 7, 8, 9].map(hrs => (
+              <TouchableOpacity
+                key={hrs}
+                onPress={() => updateCheckIn({ sleepHours: hrs })}
+                style={[styles.chip, checkIn.sleepHours === hrs && styles.chipActive]}>
+                <Text style={[styles.chipText, checkIn.sleepHours === hrs && styles.chipTextActive]}>
+                  {hrs}h
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.chipLabel}>Energy & Stress</Text>
+          <View style={styles.chipRow}>
+            {(
+              [
+                { label: 'Low Energy', val: 2 },
+                { label: 'Steady', val: 3 },
+                { label: 'Peak', val: 5 },
+              ] as const
+            ).map(opt => (
+              <TouchableOpacity
+                key={opt.label}
+                onPress={() => updateCheckIn({ energyLevel: opt.val })}
+                style={[styles.chip, checkIn.energyLevel === opt.val && styles.chipActive]}>
+                <Text style={[styles.chipText, checkIn.energyLevel === opt.val && styles.chipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              onPress={() => updateCheckIn({ stressLevel: checkIn.stressLevel >= 4 ? 2 : 4 })}
+              style={[styles.chip, checkIn.stressLevel >= 4 && styles.chipWarn]}>
+              <Text style={[styles.chipText, checkIn.stressLevel >= 4 && styles.chipTextActive]}>
+                {checkIn.stressLevel >= 4 ? 'High Stress ✓' : 'Calm'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.btnRow}>
+            <View style={{ flex: 1 }}>
+              <PrimaryButton
+                title={`+1 Water (${checkIn.waterGlasses}/8)`}
+                variant="secondary"
+                onPress={() => updateCheckIn({ waterGlasses: Math.min(12, checkIn.waterGlasses + 1) })}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <PrimaryButton
+                title="Watch / Sensors"
+                variant="nav"
+                onPress={() => nav.navigate('SensorStream')}
+              />
+            </View>
+          </View>
+        </Card>
+
+        {/* Actionable Daily Coaching */}
+        <SectionHeading title="What To Do Today" />
+        {readiness.actions.map(act => (
+          <Card key={act.id} style={styles.actionCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.actionTitle}>
+                {act.icon}  {act.title}
+              </Text>
+              <StatusPill label={act.tone === 'success' ? 'ON TRACK' : act.tone === 'warning' ? 'PRIORITY' : 'TIP'} tone={act.tone} />
+            </View>
+            <Text style={styles.subDesc}>{act.detail}</Text>
+          </Card>
+        ))}
+
+        <SectionHeading title="Deep-Dive Tools" />
 
         {HEALTH_SUBMODULES.map(sub => {
           const serverMatch = submodulesQuery.data?.submodules?.find(s => s.key === sub.key);
@@ -203,6 +361,30 @@ const styles = StyleSheet.create({
   sensorTag: { fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health },
   openLink: { fontFamily: fontFamily.medium, fontSize: 13, fontWeight: '600', color: moduleColors.health },
   ctaWrap: { marginTop: spacing.xs },
+  headlineText: { ...typography.body, color: colors.textPrimary, lineHeight: 20 },
+  chipLabel: { fontFamily: fontFamily.medium, fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.button,
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  chipActive: {
+    backgroundColor: 'rgba(45, 212, 191, 0.16)',
+    borderColor: moduleColors.health,
+  },
+  chipWarn: {
+    backgroundColor: 'rgba(245, 158, 11, 0.18)',
+    borderColor: colors.statusWarning,
+  },
+  chipText: { fontFamily: fontFamily.medium, fontSize: 12.5, color: colors.textSecondary },
+  chipTextActive: { color: colors.textPrimary, fontWeight: '700' },
+  btnRow: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.xs },
+  actionCard: { gap: 4, borderColor: 'rgba(45, 212, 191, 0.25)' },
+  actionTitle: { fontFamily: fontFamily.medium, fontSize: 14.5, fontWeight: '700', color: colors.textPrimary, flex: 1 },
   guardrailCard: {
     borderColor: 'rgba(245, 158, 11, 0.3)',
     backgroundColor: 'rgba(245, 158, 11, 0.06)',
