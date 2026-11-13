@@ -107,12 +107,7 @@ export default function SensorStreamScreen() {
     <Screen
       title="Live Body & Watch Sensors"
       subtitle="On-device motion tracking & wearable health sync"
-      badge="HEALTH · SENSORS"
-      rightAction={
-        <TouchableOpacity onPress={() => nav.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-      }>
+      badge="HEALTH · SENSORS">
       <View style={styles.content}>
         <Card variant="featured" style={styles.liveCard}>
           <View style={styles.rowBetween}>

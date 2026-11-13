@@ -82,7 +82,10 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           return;
         }
         perms.setPermission('gpsLocation', true);
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        const pos =
+          lastKnown ??
+          (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
         const pt = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         await digitalTwinApi.sendPrivacyTelemetry([
           {
@@ -116,9 +119,10 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
         const existing = await financeApi.channels();
         let channelsCount = existing.channels?.length ?? 0;
         if (channelsCount === 0) {
+          const validChannelType = Platform.OS === 'android' ? 'android_sms' : 'ios_shortcut';
           await financeApi.createChannel({
-            channel_type: 'sms_upi_alerts',
-            provider_name: 'On-Device Bank & UPI Parser',
+            channel_type: validChannelType,
+            provider_name: Platform.OS === 'android' ? 'Android Bank & UPI SMS' : 'iOS Bank Alert Shortcut',
           });
           await financeApi.createConsent({
             provider_type: 'account_aggregator',
@@ -126,15 +130,21 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           });
           channelsCount = 1;
         }
-        const twin = await financeApi.digitalTwin();
+        const [twin, accts, txns] = await Promise.all([
+          financeApi.digitalTwin(),
+          financeApi.accounts(),
+          financeApi.transactions(10),
+        ]);
+        const acctCount = accts.count ?? accts.accounts?.length ?? 0;
+        const txnCount = txns.count ?? txns.transactions?.length ?? 0;
         set(state => ({
           domains: {
             ...state.domains,
             finance: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary: `${channelsCount} sync channel(s) active · Score ${twin.health_score}/100`,
-              recordsSynced: channelsCount,
+              summary: `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${twin.health_score}/100`,
+              recordsSynced: channelsCount + acctCount + txnCount,
             },
           },
         }));
@@ -184,18 +194,25 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             ingested = Object.keys(features).length;
           }
         }
-        const sessions = await healthApi.listSleepSessions('default-user', 5);
+        const [sessions, streams] = await Promise.all([
+          healthApi.listSleepSessions('default-user', 5),
+          healthApi.listLatestFeatures('default-user', 5),
+        ]);
         const total = sessions.sessions?.length ?? 0;
+        const streamCount = streams.streams?.length ?? 0;
+        const isLive = Boolean(bridge?.available || ingested > 0 || streamCount > 0 || total > 0);
         set(state => ({
           domains: {
             ...state.domains,
             health: {
-              status: bridge?.available || total > 0 ? 'connected' : 'needs_access',
+              status: isLive ? 'connected' : 'needs_access',
               lastSyncAt: nowIso(),
               summary: bridge?.available
-                ? `${bridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'} linked · ${total} nights`
-                : `${total} sleep record(s) · Open Live Sensors on physical phone`,
-              recordsSynced: ingested + total,
+                ? `${bridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'} linked · ${streamCount} streams · ${total} nights`
+                : streamCount > 0 || total > 0
+                  ? `${streamCount} sensor streams · ${total} sleep nights synced`
+                  : 'Install Health Connect / pair watch or start Live Sensors',
+              recordsSynced: ingested + streamCount + total,
             },
           },
         }));

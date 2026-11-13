@@ -87,12 +87,7 @@ export default function SleepClearanceScreen() {
     <Screen
       title="Sleep & Recovery Insights"
       subtitle="Overnight sleep physiology & trend visualization"
-      badge="HEALTH · SLEEP"
-      rightAction={
-        <TouchableOpacity onPress={() => nav.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-      }>
+      badge="HEALTH · SLEEP">
       <View style={styles.content}>
         {activeResult ? (
           <>

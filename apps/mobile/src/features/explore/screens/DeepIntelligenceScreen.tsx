@@ -229,6 +229,57 @@ export default function DeepIntelligenceScreen() {
           {/* TAB 1: MODEL MATRIX */}
           {activeTab === 'matrix' && (
             <FadeIn>
+              {/* Studio vs Copilot Differentiation & Business Value */}
+              <SectionHeading title="Why Intelligence Studio vs. Copilot?" />
+              <Card variant="featured" style={{ gap: spacing.s, marginBottom: spacing.m, borderColor: 'rgba(29, 143, 225, 0.35)' }}>
+                <View style={{ flexDirection: 'row', gap: spacing.s }}>
+                  <View style={{ flex: 1, padding: spacing.s, borderRadius: 10, backgroundColor: colors.bgElevated }}>
+                    <Text style={{ fontFamily: fontFamily.medium, fontSize: 12.5, fontWeight: '700', color: colors.navBlue }}>
+                      Intelligence Studio
+                    </Text>
+                    <Text style={{ fontFamily: fontFamily.sans, fontSize: 11.5, color: colors.textSecondary, marginTop: 3 }}>
+                      Automated ML workbench: runs live risk simulations, forecasts & anomaly checks.
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, padding: spacing.s, borderRadius: 10, backgroundColor: colors.bgElevated }}>
+                    <Text style={{ fontFamily: fontFamily.medium, fontSize: 12.5, fontWeight: '700', color: colors.accentBright }}>
+                      NEXORA Copilot
+                    </Text>
+                    <Text style={{ fontFamily: fontFamily.sans, fontSize: 11.5, color: colors.textSecondary, marginTop: 3 }}>
+                      Conversational advisor: answers questions & drafts daily action plans.
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={{ fontFamily: fontFamily.medium, fontSize: 12.5, fontWeight: '700', color: colors.textPrimary, marginTop: 4 }}>
+                  Business & Operational Impact
+                </Text>
+                <Text style={styles.modelDesc}>
+                  • Commute & Fleet: Cuts late arrivals by forecasting corridor slowdowns & road hazards.{'\n'}
+                  • Treasury & Cashflow: Flags liquidity dips 30 days ahead & spots unusual spend.{'\n'}
+                  • Operations & Calls: Auto-routes urgent payment/client calls before SLA breach.
+                </Text>
+
+                <View style={{ flexDirection: 'row', gap: spacing.s, marginTop: 4 }}>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton
+                      title="Run Cashflow Check"
+                      onPress={() => {
+                        setActiveTab('finance');
+                        cashflowMut.mutate();
+                      }}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton
+                      title="Ask Copilot →"
+                      variant="secondary"
+                      onPress={() => nav.navigate('Tabs', { screen: 'AI' })}
+                    />
+                  </View>
+                </View>
+              </Card>
+
               <SectionHeading title="Active Intelligent Systems" />
               <View style={styles.matrixGrid}>
                 {friendlyFeatures.map(f => (

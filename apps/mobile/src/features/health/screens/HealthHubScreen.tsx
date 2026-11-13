@@ -78,12 +78,7 @@ export default function HealthHubScreen() {
     <Screen
       title="NEXORA Health"
       subtitle="Sleep physiology, connected sensors & visual trends"
-      badge="HEALTH"
-      rightAction={
-        <TouchableOpacity onPress={() => nav.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-      }>
+      badge="HEALTH">
       <View style={styles.content}>
         {/* Visual Health Snapshot */}
         <Card variant="featured" style={styles.heroCard}>

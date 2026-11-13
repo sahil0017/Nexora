@@ -82,12 +82,7 @@ export default function MriValidationScreen() {
     <Screen
       title="MRI Study & Accuracy"
       subtitle="Visual agreement between sleep estimates & 3T MRI scans"
-      badge="HEALTH · STUDY"
-      rightAction={
-        <TouchableOpacity onPress={() => nav.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-      }>
+      badge="HEALTH · STUDY">
       <View style={styles.content}>
         <SectionHeading title="Study Accuracy Overview" />
         <Card variant="featured" style={styles.resultCard}>
