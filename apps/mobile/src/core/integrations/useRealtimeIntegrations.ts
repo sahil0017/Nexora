@@ -1,4 +1,4 @@
-import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 import * as Location from 'expo-location';
 import { create } from 'zustand';
 import { financeApi } from '../api/finance';
@@ -190,16 +190,7 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
       }
 
       if (domain === 'finance') {
-        let smsGranted = Platform.OS !== 'android';
-        if (Platform.OS === 'android') {
-          try {
-            const res = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_SMS);
-            smsGranted = res === PermissionsAndroid.RESULTS.GRANTED;
-          } catch {
-            smsGranted = false;
-          }
-        }
-        perms.setPermission('smsAlertIngestion', smsGranted);
+        perms.setPermission('smsAlertIngestion', true);
         perms.setPermission('aiCfoTelemetry', true);
 
         const existing = await financeApi.channels();
@@ -208,41 +199,13 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           const validChannelType = Platform.OS === 'android' ? 'android_sms' : 'ios_shortcut';
           await financeApi.createChannel({
             channel_type: validChannelType,
-            provider_name: Platform.OS === 'android' ? 'Android Bank & UPI SMS' : 'iOS Bank Alert Shortcut',
+            provider_name: Platform.OS === 'android' ? 'Android Bank & UPI Alerts' : 'iOS Bank Alert Shortcut',
           });
           await financeApi.createConsent({
             provider_type: 'account_aggregator',
             tsp_name: 'Sahamati / Finvu',
           });
           channelsCount = 1;
-        }
-
-        let ingestedSms = 0;
-        if (Platform.OS === 'android' && smsGranted) {
-          const smsReader =
-            (NativeModules.NexoraCallerIdModule as {
-              readDeviceBankSms?: (limit: number) => Promise<{ messages?: { sender: string; body: string; timestamp_ms: number }[] }>;
-            } | undefined) ??
-            (NativeModules.NexoraSmsReader as {
-              readDeviceBankSms?: (limit: number) => Promise<{ messages?: { sender: string; body: string; timestamp_ms: number }[] }>;
-            } | undefined);
-          if (typeof smsReader?.readDeviceBankSms === 'function') {
-            try {
-              const smsBatch = await smsReader.readDeviceBankSms(30);
-              const alerts = (smsBatch?.messages ?? [])
-                .filter(m => Boolean(m.body?.trim()))
-                .map(m => ({
-                  source_channel: 'android_notification' as const,
-                  raw_text: `${m.sender ? `[${m.sender}] ` : ''}${m.body}`,
-                }));
-              if (alerts.length > 0) {
-                const synced = await financeApi.smartSyncBatch({ alerts });
-                ingestedSms = synced.ingested_alerts ?? alerts.length;
-              }
-            } catch {
-              // Native SMS batch optional if current binary predates reader
-            }
-          }
         }
 
         const [twinRes, acctsRes, txnsRes] = await Promise.allSettled([
@@ -261,11 +224,8 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             finance: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary:
-                ingestedSms > 0
-                  ? `${ingestedSms} SMS alerts ingested · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`
-                  : `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`,
-              recordsSynced: channelsCount + ingestedSms + acctCount + txnCount,
+              summary: `${channelsCount} channel(s) · ${acctCount} accts · ${txnCount} txns · Score ${score}/100`,
+              recordsSynced: channelsCount + acctCount + txnCount,
             },
           },
         }));

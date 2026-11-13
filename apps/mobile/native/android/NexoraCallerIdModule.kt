@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.CallLog
-import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -119,58 +118,6 @@ class NexoraCallerIdModule(private val reactCtx: ReactApplicationContext) : Reac
             promise.resolve(result)
         } catch (t: Throwable) {
             promise.reject("CALL_LOG_ERR", t.message, t)
-        }
-    }
-
-    @ReactMethod
-    fun readDeviceBankSms(limit: Int, promise: Promise) {
-        if (ContextCompat.checkSelfPermission(reactCtx, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
-            promise.reject("PERMISSION_DENIED", "READ_SMS permission is required to sync bank & UPI alerts")
-            return
-        }
-        try {
-            val maxRows = if (limit <= 0) 30 else limit.coerceAtMost(100)
-            val messages = Arguments.createArray()
-            val projection = arrayOf(
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE,
-            )
-            val keywords = listOf("debited", "credited", "upi", "rs.", "rs ", "inr", "a/c", "acct", "bank", "spent", "paid")
-            reactCtx.contentResolver.query(
-                Telephony.Sms.Inbox.CONTENT_URI,
-                projection,
-                null,
-                null,
-                "${Telephony.Sms.DATE} DESC",
-            )?.use { cursor ->
-                val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
-                val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
-                val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
-                var scanned = 0
-                var matched = 0
-                while (cursor.moveToNext() && scanned < 250 && matched < maxRows) {
-                    scanned++
-                    val body = if (bodyIdx >= 0) cursor.getString(bodyIdx).orEmpty() else ""
-                    val lower = body.lowercase()
-                    if (body.isBlank() || keywords.none { lower.contains(it) }) continue
-                    val sender = if (addrIdx >= 0) cursor.getString(addrIdx).orEmpty() else "BANK"
-                    val ts = if (dateIdx >= 0) cursor.getLong(dateIdx) else System.currentTimeMillis()
-                    val row = Arguments.createMap().apply {
-                        putString("sender", sender)
-                        putString("body", body)
-                        putDouble("timestamp_ms", ts.toDouble())
-                    }
-                    messages.pushMap(row)
-                    matched++
-                }
-            }
-            val out = Arguments.createMap().apply {
-                putArray("messages", messages)
-            }
-            promise.resolve(out)
-        } catch (t: Throwable) {
-            promise.reject("SMS_READ_ERR", t.message, t)
         }
     }
 }
