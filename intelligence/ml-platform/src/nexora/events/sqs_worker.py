@@ -35,6 +35,7 @@ class OnlineIntelligenceState:
         self.active_hazards: deque[dict[str, Any]] = deque(maxlen=200)
         self.finance_events: deque[dict[str, Any]] = deque(maxlen=500)
         self.voice_events: deque[dict[str, Any]] = deque(maxlen=500)
+        self.health_events: deque[dict[str, Any]] = deque(maxlen=500)
         self.processed_event_ids: deque[str] = deque(maxlen=2000)
         self.events_processed: int = 0
         self.sqs_polls: int = 0
@@ -124,6 +125,16 @@ class OnlineIntelligenceState:
 
         elif etype.startswith("voice."):
             self.voice_events.append({"event_type": etype, "payload": payload})
+
+        elif etype.startswith("health.consent.revoked"):
+            uid = str(payload.get("user_id") or "")
+            self.health_events = deque(
+                [e for e in self.health_events if str(e.get("payload", {}).get("user_id") or "") != uid],
+                maxlen=500,
+            )
+
+        elif etype.startswith("health."):
+            self.health_events.append({"event_type": etype, "payload": payload})
 
         self.events_processed += 1
         self.last_event_at = datetime.now(timezone.utc).isoformat()

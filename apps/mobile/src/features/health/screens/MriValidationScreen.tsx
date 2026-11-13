@@ -1,0 +1,230 @@
+import React, { useState } from 'react';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
+import { healthApi, type CohortValidationResult } from '../../../core/api/health';
+import { Card, PrimaryButton, SectionHeading } from '../../../core/design-system/components';
+import { StatusPill } from '../../../core/design-system/motion';
+import { Screen } from '../../../shared/components/Screen';
+
+export default function MriValidationScreen() {
+  const nav = useNavigation<any>();
+  const [cohortId, setCohortId] = useState('nexora-pilot-01');
+  const [siteId, setSiteId] = useState('neuro-mri-partner-01');
+  const [dtiAlpsInput, setDtiAlpsInput] = useState('1.44');
+  const [validationResult, setValidationResult] = useState<CohortValidationResult | null>(null);
+
+  const refsQuery = useQuery({
+    queryKey: ['health', 'mri-references', cohortId],
+    queryFn: () => healthApi.listMriReferences(cohortId, 15),
+  });
+
+  const validationsQuery = useQuery({
+    queryKey: ['health', 'validations'],
+    queryFn: () => healthApi.listValidationRuns(5),
+  });
+
+  const registerMri = useMutation({
+    mutationFn: () =>
+      healthApi.createMriReference({
+        cohort_id: cohortId,
+        site_id: siteId,
+        scanner_field_t: 3.0,
+        surrogate_type: 'dti_alps_index',
+        dti_alps_index: parseFloat(dtiAlpsInput) || 1.44,
+        quality_score: 0.93,
+      }),
+    onSuccess: () => {
+      void refsQuery.refetch();
+    },
+  });
+
+  const runValidation = useMutation({
+    mutationFn: () => {
+      const pred = [1.22, 1.31, 1.45, 1.5, 1.28, 1.39, 1.61, 1.44, 1.35, 1.55, 1.48, 1.3];
+      return healthApi.validateCohort({
+        surrogate_target: 'dti_alps_index',
+        predicted: pred,
+        mri_reference: [1.2, 1.33, 1.42, 1.52, 1.25, 1.4, 1.58, 1.46, 1.36, 1.53, 1.49, 1.31],
+        ci_low: pred.map(p => p - 0.06),
+        ci_high: pred.map(p => p + 0.06),
+        night_groups: [
+          [1.21, 1.23, 1.22],
+          [1.45, 1.47, 1.44],
+          [1.55, 1.53, 1.56],
+        ],
+        subgroups: [
+          { device_model: 'iphone_15' },
+          { device_model: 'iphone_15' },
+          { device_model: 'iphone_15' },
+          { device_model: 'iphone_15' },
+          { device_model: 'iphone_15' },
+          { device_model: 'pixel_9' },
+          { device_model: 'pixel_9' },
+          { device_model: 'pixel_9' },
+          { device_model: 'pixel_9' },
+          { device_model: 'pixel_9' },
+        ],
+      });
+    },
+    onSuccess: res => setValidationResult(res),
+  });
+
+  return (
+    <Screen
+      title="MRI Study & Accuracy"
+      subtitle="How closely sleep estimates match clinical MRI scans"
+      badge="HEALTH · STUDY"
+      rightAction={
+        <TouchableOpacity onPress={() => nav.goBack()}>
+          <Text style={styles.backText}>← Back</Text>
+        </TouchableOpacity>
+      }>
+      <View style={styles.content}>
+        <SectionHeading title="Add a Clinical MRI Scan Result" />
+        <Card>
+          <Text style={styles.label}>Study Group ID</Text>
+          <TextInput
+            style={styles.input}
+            value={cohortId}
+            onChangeText={setCohortId}
+            placeholderTextColor={colors.textMuted}
+          />
+          <Text style={[styles.label, { marginTop: spacing.s }]}>Hospital / Clinic ID</Text>
+          <TextInput
+            style={styles.input}
+            value={siteId}
+            onChangeText={setSiteId}
+            placeholderTextColor={colors.textMuted}
+          />
+          <Text style={[styles.label, { marginTop: spacing.s }]}>MRI Brain-Fluid Score (3T Scan)</Text>
+          <TextInput
+            style={styles.input}
+            value={dtiAlpsInput}
+            onChangeText={setDtiAlpsInput}
+            keyboardType="decimal-pad"
+            placeholderTextColor={colors.textMuted}
+          />
+          <View style={{ marginTop: spacing.m }}>
+            <PrimaryButton
+              title="Save MRI Scan Result"
+              loading={registerMri.isPending}
+              onPress={() => registerMri.mutate()}
+            />
+          </View>
+          {refsQuery.data?.references?.length ? (
+            <Text style={styles.metaText}>
+              Saved MRI scans in study: {refsQuery.data.references.length}
+            </Text>
+          ) : null}
+        </Card>
+
+        <SectionHeading title="Check Study Accuracy" />
+        <Card>
+          <Text style={styles.metaText}>
+            Measures how closely overnight sleep estimates match clinical MRI scans across nights and devices.
+          </Text>
+          <View style={{ marginTop: spacing.m }}>
+            <PrimaryButton
+              title="Run Accuracy Check"
+              variant="nav"
+              loading={runValidation.isPending}
+              onPress={() => runValidation.mutate()}
+            />
+          </View>
+        </Card>
+
+        {validationsQuery.data?.validations?.length ? (
+          <Text style={styles.metaText}>
+            Saved Accuracy Checks: {validationsQuery.data.validations.length}
+          </Text>
+        ) : null}
+
+        {validationResult ? (
+          <Card variant="featured" style={styles.resultCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.cardTitle}>Accuracy Report</Text>
+              <StatusPill
+                label={validationResult.validation_passed ? 'PASSING' : 'NEEDS MORE DATA'}
+                tone={validationResult.validation_passed ? 'success' : 'warning'}
+              />
+            </View>
+            <Text style={styles.iccDoc}>Multi-night repeatability check</Text>
+            {validationResult.stratified_metrics?.length ? (
+              <View style={{ marginTop: spacing.xs }}>
+                {validationResult.stratified_metrics.map((sg, idx) => (
+                  <Text key={idx} style={styles.metaText}>
+                    Device {sg.group_value}: Match {sg.lin_ccc.toFixed(3)} · Avg Error {sg.mae.toFixed(3)} ({sg.sample_count} scans)
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+            <View style={styles.grid}>
+              <StatTile label="Overall Match" value={validationResult.lin_ccc.toFixed(3)} />
+              <StatTile label="Avg Error" value={validationResult.mae.toFixed(3)} />
+              <StatTile
+                label="Repeatability"
+                value={
+                  validationResult.multi_night_icc != null
+                    ? validationResult.multi_night_icc.toFixed(3)
+                    : '—'
+                }
+              />
+            </View>
+            <View style={[styles.grid, { marginTop: spacing.s }]}>
+              <StatTile label="Average Offset" value={validationResult.bland_altman_bias.toFixed(4)} />
+              <StatTile
+                label="Range Accuracy"
+                value={
+                  validationResult.interval_coverage_95 != null
+                    ? `${Math.round(validationResult.interval_coverage_95 * 100)}%`
+                    : '—'
+                }
+              />
+              <StatTile
+                label="Deep-Sleep Link"
+                value={`+${validationResult.n3_associated_feature_sensitivity.toFixed(3)}`}
+              />
+            </View>
+          </Card>
+        ) : null}
+      </View>
+    </Screen>
+  );
+}
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.tile}>
+      <Text style={styles.tileLabel}>{label}</Text>
+      <Text style={styles.tileValue}>{value}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: { gap: spacing.m },
+  backText: { fontFamily: fontFamily.medium, fontSize: 13, color: moduleColors.health, fontWeight: '600' },
+  label: { ...typography.label, color: colors.textSecondary, marginBottom: 4 },
+  input: {
+    backgroundColor: colors.bgElevated,
+    borderColor: colors.borderSubtle,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.m,
+    paddingVertical: spacing.s,
+    color: colors.textPrimary,
+    fontFamily: fontFamily.mono,
+    fontSize: 13,
+  },
+  metaText: { ...typography.body, color: colors.textSecondary, marginTop: spacing.s },
+  resultCard: { borderColor: 'rgba(45, 212, 191, 0.4)' },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardTitle: { ...typography.sectionHeading, color: colors.textPrimary },
+  iccDoc: { fontFamily: fontFamily.mono, fontSize: 11, color: moduleColors.health, marginTop: 4 },
+  grid: { flexDirection: 'row', gap: spacing.s, marginTop: spacing.m },
+  tile: { flex: 1, backgroundColor: colors.bgElevated, borderRadius: radii.card, padding: spacing.s },
+  tileLabel: { fontSize: 11, color: colors.textMuted },
+  tileValue: { fontFamily: fontFamily.mono, fontSize: 12.5, color: colors.textPrimary, marginTop: 2 },
+});

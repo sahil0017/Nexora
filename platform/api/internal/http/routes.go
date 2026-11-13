@@ -15,6 +15,7 @@ import (
 	"github.com/nexora/platform/api/internal/config"
 	"github.com/nexora/platform/api/internal/handlers"
 	"github.com/nexora/platform/api/internal/modules/finance"
+	"github.com/nexora/platform/api/internal/modules/health"
 	"github.com/nexora/platform/api/internal/modules/mobility"
 	"github.com/nexora/platform/api/internal/modules/voice"
 	"github.com/nexora/platform/api/internal/platform/cache"
@@ -31,10 +32,12 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 	var mobRepo mobility.Repository
 	var finRepo finance.Repository
 	var voiceRepo voice.Repository
+	var healthRepo health.Repository
 	if pg != nil {
 		mobRepo = mobility.NewPostgresRepository(pg)
 		finRepo = finance.NewPostgresRepository(pg)
 		voiceRepo = voice.NewPostgresRepository(pg)
+		healthRepo = health.NewPostgresRepository(pg)
 	}
 	sharedCache := cache.New(cfg.RedisURL)
 	mobSvc := mobility.NewService(mobRepo, mobility.HeuristicRoutingProvider{}, mobility.NewMLClient(cfg.MLServiceURL), logger).
@@ -43,6 +46,7 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 		WithCache(sharedCache)
 	voiceSvc := voice.NewService(voiceRepo, voice.NewMLClient(cfg.MLServiceURL), voice.NewVoiceVault(cfg.FinanceMasterKey), logger).
 		WithCache(sharedCache)
+	healthSvc := health.NewService(healthRepo, health.NewMLClient(cfg.MLServiceURL), logger)
 
 	r.Route("/api/v1", func(v1 chi.Router) {
 		v1.Get("/healthz", h.Health)
@@ -71,6 +75,9 @@ func RegisterRoutes(r chi.Router, cfg *config.Config, logger *slog.Logger, pg *p
 
 		// Voice Intelligence Platform module
 		voice.Mount(v1, voiceSvc)
+
+		// Health & Sleep-Related Brain Clearance Research module
+		health.Mount(v1, healthSvc)
 
 		// Deep Learning Intelligence Gateway (proxies all 16 architectures to nexora-ml)
 		mountDeepGateway(v1, cfg.MLServiceURL, logger)

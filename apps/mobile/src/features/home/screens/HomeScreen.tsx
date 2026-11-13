@@ -389,7 +389,11 @@ export default function HomeScreen() {
         {SECONDARY_MODULES.map((m, i) => (
           <FadeIn key={m.key} index={i + 2} style={styles.moduleWrap}>
             <Tappable
-              onPress={() => nav.navigate('ModuleHub', { module: m.key })}
+              onPress={() =>
+                m.key === 'health'
+                  ? nav.navigate('Health')
+                  : nav.navigate('ModuleHub', { module: m.key })
+              }
               accessibilityLabel={m.title}>
               <Card style={{ gap: 4 }}>
                 <View style={styles.between}>

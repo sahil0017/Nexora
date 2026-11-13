@@ -13,11 +13,13 @@ export type PermissionKey =
   | 'voiceMicCapture'
   | 'voiceConversationMemory'
   | 'deviceCallLogsRead'
-  | 'deviceCallScreening';
+  | 'deviceCallScreening'
+  | 'healthDeviceSensors'
+  | 'healthResearchTelemetry';
 
 export type PermissionDescriptor = {
   key: PermissionKey;
-  domain: 'Mobility' | 'Finance' | 'Copilot' | 'Security' | 'Voice';
+  domain: 'Mobility' | 'Finance' | 'Copilot' | 'Security' | 'Voice' | 'Health';
   title: string;
   description: string;
   dataHandled: string;
@@ -107,6 +109,24 @@ export const PERMISSION_CATALOG: PermissionDescriptor[] = [
     dataHandled: 'Checks your local contact directory first; lets you label unknown callers anytime.',
     recommended: true,
   },
+  {
+    key: 'healthDeviceSensors',
+    domain: 'Health',
+    title: 'Real-Time Physiological & Motion Sensors',
+    description:
+      'Reads device accelerometer/gyroscope and paired wearable streams for sleep posture, respiratory & BCG micro-motion.',
+    dataHandled: 'Processed into anonymized physiological windows; never sold or shared.',
+    recommended: true,
+  },
+  {
+    key: 'healthResearchTelemetry',
+    domain: 'Health',
+    title: 'Sleep-Clearance Research Telemetry',
+    description:
+      'Allows syncing de-identified sleep-physiology windows and paired MRI cohort metadata for surrogate validation.',
+    dataHandled: 'Stored with explicit research guardrails; non-diagnostic.',
+    recommended: false,
+  },
 ];
 
 export type PermissionMap = Record<PermissionKey, boolean>;
@@ -143,6 +163,8 @@ const DEFAULT_PERMISSIONS: PermissionMap = {
   voiceConversationMemory: false,
   deviceCallLogsRead: false,
   deviceCallScreening: false,
+  healthDeviceSensors: true,
+  healthResearchTelemetry: false,
 };
 
 function loadPersisted(): {
@@ -216,6 +238,8 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
       voiceConversationMemory: true,
       deviceCallLogsRead: false,
       deviceCallScreening: true,
+      healthDeviceSensors: true,
+      healthResearchTelemetry: false,
     };
     const now = new Date().toISOString();
     const payload = { permissions: next, consentConfigured: true, lastUpdatedAt: now };
@@ -235,6 +259,8 @@ export const usePrivacyPermissions = create<PrivacyPermissionsState>((set, get) 
       voiceConversationMemory: false,
       deviceCallLogsRead: false,
       deviceCallScreening: false,
+      healthDeviceSensors: false,
+      healthResearchTelemetry: false,
     };
     const now = new Date().toISOString();
     const payload = { permissions: next, consentConfigured: true, lastUpdatedAt: now };

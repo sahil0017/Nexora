@@ -88,6 +88,8 @@ export default function ExploreScreen() {
       nav.navigate('Finance');
     } else if (k === 'voice') {
       nav.navigate('Voice');
+    } else if (k === 'health') {
+      nav.navigate('Health');
     } else if (k === 'assistant') {
       nav.navigate('AI');
     } else {

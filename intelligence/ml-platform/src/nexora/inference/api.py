@@ -29,6 +29,7 @@ from nexora.models.privacy_intelligence import PrivacyPreservingCrowdAggregator
 from nexora.models.traffic_forecaster import SpatioTemporalTrafficForecaster
 from nexora.vision.road_inspector import RoadVisionInspector
 from nexora.voice.engine import VoiceIntelligenceNetwork
+from nexora.health import ResearchInferenceEngine, evaluate_cohort_agreement
 from nexora.deep_learning import hub
 
 traffic_model = SpatioTemporalTrafficForecaster()
@@ -42,6 +43,7 @@ vision_model = RoadVisionInspector()
 assistant_model = MobilityAIAssistant()
 finance_network = FinanceIntelligenceNetwork()
 voice_network = VoiceIntelligenceNetwork()
+health_research_engine = ResearchInferenceEngine()
 online_state = OnlineIntelligenceState(traffic=traffic_model, demand=demand_model)
 
 # Event-versioned 30s TTL cache for high-frequency spatial/traffic inference
@@ -985,4 +987,35 @@ def deep_evaluation_benchmark(body: dict[str, Any]) -> dict[str, Any]:
         y_pred=y_pred,
         y_lower=y_lower,
         y_upper=y_upper,
+    )
+
+
+# ---------------------------------------------------------------------------
+# NEXORA HEALTH — SLEEP-RELATED BRAIN CLEARANCE RESEARCH (/v1/health/*)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/health/sensors/process")
+def health_sensors_process(body: dict[str, Any]) -> dict[str, Any]:
+    """Sensor-measurement pipeline: extract provenanced features without cross-sensor fabrication."""
+    return health_research_engine.process_measurement_window(body)
+
+
+@app.post("/v1/health/sleep-clearance/predict")
+def health_sleep_clearance_predict(body: dict[str, Any]) -> dict[str, Any]:
+    """Research-inference pipeline: staged M0/M1/M2 physiological state estimate with uncertainty & limitations."""
+    return health_research_engine.infer_research_state(body)
+
+
+@app.post("/v1/health/sleep-clearance/validate")
+def health_sleep_clearance_validate(body: dict[str, Any]) -> dict[str, Any]:
+    """Clinical-reference validation pipeline: MAE, RMSE, CCC, Bland-Altman, ICC(2,1) & coverage."""
+    return evaluate_cohort_agreement(
+        predicted=[float(v) for v in (body.get("predicted") or [])],
+        mri_reference=[float(v) for v in (body.get("mri_reference") or [])],
+        night_groups=body.get("night_groups"),
+        ci_low=[float(v) for v in body["ci_low"]] if body.get("ci_low") is not None else None,
+        ci_high=[float(v) for v in body["ci_high"]] if body.get("ci_high") is not None else None,
+        surrogate_target=str(body.get("surrogate_target", "dti_alps_index")),
+        subgroups=body.get("subgroups"),
     )
