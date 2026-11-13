@@ -1,117 +1,131 @@
 # NEXORA
 
-Intelligent life platform unifying **Mobility (MoveSmart)**, **Wealth & Finance**, **Voice & Call Notes**, **Copilot**, **Health**, and **Work** on an event-driven architecture.
+**NEXORA** is a privacy-first personal intelligence operating system unifying **Mobility (MoveSmart)**, **Wealth & Finance**, **Health & Sleep-Related Brain Clearance**, **Voice & Call Notes**, and **Cross-Domain Copilot** on an event-driven, zero-trust architecture.
 
-## Architecture Overview
+---
 
-NEXORA separates **transactional state and control plane** (Go + PostgreSQL/PostGIS + Redis) from **online learning and inference** (Python + FastAPI), connected asynchronously through a **Transactional Outbox → AWS SNS/SQS (or local relay) → Online Intelligence Consumer** pipeline, with **Server-Sent Events (SSE)** for real-time client updates across Finance and Voice.
+## 1. System Architecture Overview
+
+NEXORA separates **transactional state, security enforcement, and control plane** (`platform/api`: Go + Chi + PostgreSQL/PostGIS + Redis) from **online learning and deep inference** (`intelligence/ml-platform`: Python + FastAPI + PyTorch), bridged by a **Transactional Outbox → AWS SNS/SQS (or inline HTTP relay) → Idempotent Intelligence Consumer** pipeline, with **Server-Sent Events (SSE)** for real-time client updates.
 
 ```mermaid
-flowchart LR
-    Mobile["Mobile / Web Client<br/>(Expo React Native + Native Caller/CallKit Plugin)"]
-    API["Go Control-Plane API<br/>(platform/api · Chi Modular Monolith)"]
-    PG[("PostgreSQL 16 + PostGIS<br/>mobility · finance · voice · platform.event_outbox")]
-    Redis[("Redis 7.4<br/>Geo Radar + Twin & Voice Overview Cache")]
-    DDB[("AWS DynamoDB<br/>Documents / Notes")]
-    S3[("S3 / Local Vault<br/>Presigned Audio & Transcripts")]
-    Relay["OutboxRelay<br/>(<5ms channel wakeup + 5s poll)"]
-    SNS["AWS SNS Topic<br/>(Event Fan-out)"]
-    SQS["AWS SQS Queue<br/>(20s Long-Poll)"]
-    ML["Python ML Service<br/>(intelligence/ml-platform · FastAPI)"]
-    State["OnlineIntelligenceState<br/>(Idempotent Event Store + H3 Buffers)"]
+flowchart TB
+    subgraph Client["Mobile & Web Client (apps/mobile · Expo React Native)"]
+        UI["Home · Explore · Copilot · Profile · Real-Time Integrations"]
+        Sec["Security Layer<br/>BiometricLockGate · SecureStore · FLAG_SECURE"]
+        Native["Play-Protect-Safe Native & Expo Bridges<br/>GPS Watch · Phone IMU · Health Connect · CallLog · Calendar · DocPicker"]
+        UI --- Sec
+        UI --- Native
+    end
 
-    Mobile -- "REST / HTTPS" --> API
-    Mobile -- "Presigned PUT / GET" --> S3
-    API -- "SSE (/finance/stream · /voice/stream)" --> Mobile
-    API -- "Atomic Tx + EnqueueOutbox()" --> PG
-    API -- "Geo Radar / Cache" --> Redis
-    API -- "Documents" --> DDB
-    API -- "Presign + Artifacts" --> S3
+    subgraph Edge["AWS Edge & Security Boundary"]
+        Caddy["Caddy Reverse Proxy<br/>TLS 1.3 · Auto HTTPS (*.sslip.io)"]
+    end
+
+    subgraph ControlPlane["Go Control-Plane API (platform/api · Chi Modular Monolith)"]
+        MW["Security Middleware<br/>HSTS · CSP · Rate Limiter (120/min) · 2MB Cap · Slowloris Timeouts"]
+        Modules["Domain Modules<br/>mobility · finance · health · voice · privacy · identity · deep proxy"]
+        SSE["SSE Broadcasters (/finance/stream · /voice/stream)"]
+        MW --> Modules
+        Modules --> SSE
+    end
+
+    subgraph Data["Persistence, Cache & Object Storage"]
+        PG[("PostgreSQL 16 + PostGIS<br/>Migrations 0001–0010 + platform.event_outbox")]
+        Redis[("Redis 7.4<br/>Geo Radar · Twin & Overview Cache")]
+        DDB[("AWS DynamoDB<br/>Documents & Notes")]
+        S3[("AWS S3 / MinIO<br/>Presigned Audio & Artifacts")]
+    end
+
+    subgraph Async["Event Backbone & Deep ML Brain"]
+        Relay["OutboxRelay (<5ms wakeup + 5s poll)"]
+        SNS["AWS SNS Topic"]
+        SQS["AWS SQS Queue (20s long-poll)"]
+        ML["Python FastAPI ML Platform (intelligence/ml-platform)<br/>16 Deep Learning Models · Health Surrogates · Online State"]
+    end
+
+    Client -- "HTTPS / REST" --> Caddy
+    Caddy --> MW
+    SSE -- "Server-Sent Events" --> Client
+    Client -- "Presigned PUT / GET" --> S3
+
+    Modules -- "Atomic Tx + EnqueueOutbox()" --> PG
+    Modules -- "Cache / Geo" --> Redis
+    Modules -- "Documents" --> DDB
+    Modules -- "Presign URLs" --> S3
+    Modules -- "/api/v1/deep/* Proxy" --> ML
+
     PG -- "SELECT unpublished (batch 25)" --> Relay
-    Relay -- "Publish Envelope" --> SNS
+    Relay -- "SigV4 Publish" --> SNS
     SNS --> SQS
     SQS -- "sqs_worker.py" --> ML
-    Relay -- "POST /v1/events/ingest (inline)" --> ML
-    ML --> State
+    Relay -- "POST /v1/events/ingest" --> ML
 ```
 
-## Core Domain Modules
+---
+
+## 2. Core Domain Modules
 
 ### 1. Mobility — MoveSmart (`platform/api/internal/modules/mobility`, `apps/mobile/src/features/move`)
-- Turn-by-turn navigation, live corridor telemetry, traffic anomaly detection, road hazard reporting, and H3 spatial hotspot & demand forecasting (`traffic_forecaster.py`, `demand_forecaster.py`, `eta_engine.py`, `city_digital_twin.py`).
+- Turn-by-turn multimodal routing, live corridor telemetry, traffic anomaly detection, road hazard reporting, and H3 spatial hotspot & demand forecasting (`traffic_forecaster.py`, `demand_forecaster.py`, `eta_engine.py`, `city_digital_twin.py`).
+- Privacy-preserving crowd telemetry (`POST /api/v1/move/privacy/telemetry`) with k-anonymity cell suppression ($k=3$) and Laplace differential privacy ($\varepsilon=1.0$).
 
 ### 2. Wealth & Finance (`platform/api/internal/modules/finance`, `apps/mobile/src/features/finance`)
-- Net worth & financial digital twin, multi-account ledger & UPI/bank alert parsing, tax regime & LRS planning, AI CFO insights, Redis twin cache invalidation (`fin:twin:v1:<userID>`), and real-time SSE push (`/api/v1/finance/stream`).
+- Financial Digital Twin, multi-account ledger, Account Aggregator (`Sahamati / Finvu`) channel & consent orchestration (`android_sms`, `ios_shortcut`, `email_forward`, `manual_import`), tax regime & LRS planning, AI CFO synthesis, Redis twin cache invalidation (`fin:twin:v1:<userID>`), and real-time SSE push (`/api/v1/finance/stream`).
+- Zero-permission CSV/PDF statement picker (`expo-document-picker`) in Integrations.
 
-### 3. Voice & Call Notes (`platform/api/internal/modules/voice`, `intelligence/ml-platform/src/nexora/voice`)
-- **Capture & Streaming Sessions**: Quick notes, audio uploads via presigned S3 PUT/GET (`s3_presign.go`), dual-track live call/meeting streaming sessions (`/voice/sessions/*`), and downloadable transcript/audio artifacts (`GET /api/v1/voice/conversations/{id}/download`).
-- **Speech & Understanding Pipeline**: VAD/SNR audio quality routing (`audio_pipeline.py`), speaker clustering & interaction dynamics (`speech_engine.py`), commitments/decisions/knowledge graph extraction, contradiction reasoning, and source-grounded Q&A (`understanding_engine.py`, `ir.py`).
-- **Native Caller ID & Call History**:
+### 3. Health & Sleep-Related Brain Clearance (`platform/api/internal/modules/health`, `apps/mobile/src/features/health`)
+- **Submodules**: Health Hub (`HealthHubScreen`), Live Sensors (`SensorStreamScreen`), Sleep & Clearance (`SleepClearanceScreen`), and MRI Cohort Validation (`MriValidationScreen`) with interactive visualizations (`HealthVisualizations.tsx`).
+- **Sensor & Wearable Ingestion**: Phone accelerometer/gyroscope ring buffer (`NexoraHealthSensorsModule.kt`, `25 Hz`), ambient light (`LightSensor`), step counter (`Pedometer`), and **Health Connect** (`HeartRateRecord`, `HeartRateVariabilityRmssdRecord`, `RespiratoryRateRecord`, `SleepSessionRecord`, `StepsRecord`, `OxygenSaturationRecord`) / Apple HealthKit.
+- **Scientific Guardrails**: Every surrogate prediction (`dti_alps_index`, `csf_pulsatile_velocity_cm_s`, `clearance_efficiency_score`) enforces provenance metadata, uncertainty intervals, and explicit claim guardrails (`migrations/0008`–`0009`).
+
+### 4. Voice & Call Notes (`platform/api/internal/modules/voice`, `intelligence/ml-platform/src/nexora/voice`)
+- **Capture & Streaming**: Quick notes, presigned S3 audio uploads (`s3_presign.go`), dual-track live sessions (`/voice/sessions/*`), and downloadable transcript/audio artifacts (`GET /api/v1/voice/conversations/{id}/download`).
+- **Speech & Understanding**: VAD/SNR routing (`audio_pipeline.py`), speaker clustering (`speech_engine.py`), commitments/decisions/knowledge graph extraction, contradiction reasoning, and source-grounded Q&A (`understanding_engine.py`, `ir.py`).
+- **Native Caller ID & Calendar**:
   - Phone numbers are SHA-256 hashed and masked (`caller_directory.go`, `call_logs.go`) before persistence in `voice.caller_directory` and `voice.call_logs`.
   - **Android**: `READ_CALL_LOG` historic call sync + `CallScreeningService` (`NexoraCallerIdModule.kt`, `withNexoraCallerId.js`).
-  - **iOS**: `CNContactStore` contacts sync + CallKit `CXCallDirectoryProvider` & live `CXCallObserver` (with CSV/JSON export support for historic logs).
+  - **iOS**: `CNContactStore` contacts sync + CallKit `CXCallDirectoryProvider` & `CXCallObserver`.
+  - **Calendar**: 24-hour upcoming event context (`expo-calendar`) after explicit user grant.
 - **Cryptographic Provenance**: SHA-256 digest, HMAC seal, utterance Merkle root, hash-chained `voice.custody_events`, and Legal Hold controls (`crypto.go`).
 
-### 4. Cross-Domain Copilot (`apps/mobile/src/features/assistant`)
-- Unified conversational assistant routing across Mobility, Wealth, Voice & Call Notes, Health, and Work with explainability factors, citations, and privacy-gated context toggles.
+### 5. Privacy & Permissions (`platform/api/internal/modules/privacy`, `apps/mobile/src/core/permissions`)
+- Server-persisted per-user permission matrix and append-only consent audit trail (`POST/GET /api/v1/privacy/permissions`, `0010_user_privacy_permissions`).
+- **Real-Time Integrations Hub** (`apps/mobile/src/features/integrations`, `useRealtimeIntegrations.ts`): Unified consent-gated sync engine with continuous GPS watching (`Location.watchPositionAsync`), active phone IMU burst ingestion, Health Connect sync, and Call Log + Calendar ingestion.
 
-### 5. Unified Deep Learning & Continuous Verification Platform (`intelligence/ml-platform/src/nexora/deep_learning`, `intelligence/evaluation`)
-Comprehensive production deep learning suite covering 16 specialized neural architectures across all four pillars:
+### 6. Cross-Domain Copilot & Deep Intelligence Studio (`apps/mobile/src/features/assistant`, `apps/mobile/src/features/explore`)
+- **Copilot**: Unified conversational assistant across Mobility, Wealth, Health, Voice, and Work with explainability factors and privacy-gated context toggles.
+- **Deep Intelligence Studio**: Direct interface to the 16 deep learning architectures with business-impact framing and shadow-mode evaluation.
 
-- **🚗 Mobility Deep ML**:
-  - `SpatioTemporalGNN`: 2-hop bidirectional spatial diffusion + dilated gated temporal convolutions (TCN) forecasting 5, 15, 30, and 60-min segment speeds (`POST /v1/deep/mobility/st-gnn/predict`).
-  - `DeepConformalETAPredictor`: Calibrated residual MLP providing finite-sample guaranteed 80% & 90% conformal coverage intervals (`POST /v1/deep/mobility/eta/conformal`).
-  - `TrajectoryTransformer`: Multi-head self-attention encoder predicting trip destinations from breadcrumbs (`POST /v1/deep/mobility/trajectory/predict`).
-  - `TripAnomalyAutoencoder`: Sequence autoencoder scoring route detours and trip outliers via reconstruction error.
-  - `NeuralRoadVision`: DINOv2-style surface defect classifier (pothole, waterlogging, flood) with monocular crater depth estimation (`POST /v1/deep/mobility/vision/inspect`).
-  - `BehavioralDemandTFT`: Temporal Fusion Transformer sequence model with distance-attenuated event surge modeling (`POST /v1/deep/mobility/demand/forecast`).
-  - `OfflineRLPolicySimulator`: Conservative Q-learning policy evaluation for digital twin signal & routing what-if experiments (`POST /v1/deep/mobility/policy/evaluate`).
+---
 
-- **💰 Finance Deep ML**:
-  - `NeuralTransactionClassifier`: MiniLM / DistilBERT-style subword transformer classifier for SMS and alert text (`POST /v1/deep/finance/classify-alert`).
-  - `DeepSVDDAnomalyDetector`: Deep Support Vector Data Description hypersphere anomaly detector for spend fraud and unusual spikes (`POST /v1/deep/finance/anomaly`).
-  - `DeepARCashFlowForecaster`: Autoregressive sequence model predicting 30/60/90-day balance trajectories ($p10, p50, p90$) (`POST /v1/deep/finance/cashflow-forecast`).
-  - `RegimeSwitchingRiskModel`: Hidden Markov 4-state regime switcher (Bull, High Volatility, Mean Reverting, Liquidity Squeeze) with Indian equity factor tilts (`POST /v1/deep/finance/regime-risk`).
-  - `GNNRiskPropagator`: Message-passing shock propagation across equity, debt, floating loans, and deposits (`POST /v1/deep/finance/graph/propagate`).
-  - `NeuralDocIntelligence`: Transformer parser extracting PAN, IFSC, salary slips, and tax forms (`POST /v1/deep/finance/doc/extract`).
+## 3. Unified Deep Learning Platform (`intelligence/ml-platform/src/nexora/deep_learning`)
 
-- **🎙️ Voice Deep ML**:
-  - `WhisperTelephonyASRAdapter`: Acoustic SNR compensation, telephony codec selection, and Hinglish/Tenglish code-switching detection (`POST /v1/deep/voice/asr/adapt`).
-  - `NeuralSpeakerDiarizer`: 16-dim neural x-vector speaker embeddings with agglomerative cosine clustering (`POST /v1/deep/voice/diarize`).
-  - `DenseMemoryRetriever`: BGE-M3 dual-encoder dense semantic retrieval across conversation transcripts (`POST /v1/deep/voice/dense-search`).
-  - `CrossEncoderReranker`: Cross-attention joint query-passage reranker for grounded QA (`POST /v1/deep/voice/rerank`).
-  - `AcousticUrgencyEmotionDetector`: Wav2Vec2/HuBERT affect classifier & caller escalation risk detector (`POST /v1/deep/voice/urgency`).
+| Domain | Models & Endpoints (`/api/v1/deep/...` → `/v1/deep/...`) |
+|---|---|
+| **Mobility** | `SpatioTemporalGNN` (`st-gnn/predict`), `DeepConformalETAPredictor` (`eta/conformal`), `TrajectoryTransformer` (`trajectory/predict`), `TripAnomalyAutoencoder`, `NeuralRoadVision` (`vision/inspect`), `BehavioralDemandTFT` (`demand/forecast`), `OfflineRLPolicySimulator` (`policy/evaluate`) |
+| **Finance** | `NeuralTransactionClassifier` (`classify-alert`), `DeepSVDDAnomalyDetector` (`anomaly`), `DeepARCashFlowForecaster` (`cashflow-forecast`), `RegimeSwitchingRiskModel` (`regime-risk`), `GNNRiskPropagator` (`graph/propagate`), `NeuralDocIntelligence` (`doc/extract`) |
+| **Voice** | `WhisperTelephonyASRAdapter` (`asr/adapt`), `NeuralSpeakerDiarizer` (`diarize`), `DenseMemoryRetriever` (`dense-search`), `CrossEncoderReranker` (`rerank`), `AcousticUrgencyEmotionDetector` (`urgency`) |
+| **Cross-Cutting** | `MultiModalUserTwinFusion` (`multimodal/user-twin`), `DriftDetector` (`evaluation/drift`), `ModelEvaluationHarness` (`intelligence/evaluation/benchmark.py`) |
 
-- **🌐 Cross-Cutting & Continuous Learning**:
-  - `MultiModalUserTwinFusion`: Fuses Voice, Finance, and Mobility into a unified 32-dim latent user twin with cross-modal behavioral correlation discovery (`POST /v1/deep/multimodal/user-twin`).
-  - `DriftDetector`: Two-sample Kolmogorov-Smirnov continuous feature drift detector (`POST /v1/deep/evaluation/drift`).
-  - `ModelEvaluationHarness` & `intelligence/evaluation/benchmark.py`: Continuous verification suite testing MAE, RMSE, MAPE, empirical conformal coverage, and shadow-mode latency overhead.
+---
 
-## Event-Driven Flow
+## 4. Security & Privacy Design
 
-1. **Atomic Write + Outbox Enqueue (`platform/api`)**
-   - Every domain mutation (`mobility/repository.go`, `finance/repository.go`, `voice/repository.go`) writes its business row and calls `events.EnqueueOutbox(...)` inside the **same PostgreSQL transaction**, guaranteeing zero lost events on crash.
-   - `EnqueueOutbox` inserts into `platform.event_outbox` and calls `NotifyOutbox()` (non-blocking buffered channel) to wake `OutboxRelay` immediately (`<5 ms`), backed by a 5-second fallback ticker.
+### Mobile Client Hardening (`apps/mobile/src/core/security`)
+- **Biometric Vault Lock** (`BiometricLockGate.tsx` + `expo-local-authentication`): Locks the app on background return when enabled in Profile, requiring Face ID / Touch ID / Android Biometrics.
+- **Hardware-Backed Secret Storage** (`appSecurity.ts` + `expo-secure-store`): Stores security flags and sensitive keys in Android Keystore / iOS Keychain (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`).
+- **Screen & Recording Shield** (`expo-screen-capture`): Enables Android `FLAG_SECURE` to block screenshots and app-switcher previews.
+- **Play-Protect-Safe Permissions**: Excludes sideloading-blocked permissions (`READ_SMS`, `RECEIVE_SMS`, `BIND_NOTIFICATION_LISTENER_SERVICE`, `BIND_ACCESSIBILITY_SERVICE`); all device access (`Location`, `READ_CALL_LOG`, `Health Connect`, `Calendar`) runs strictly after explicit user grant.
 
-2. **Relay & Envelope Wrapping (`platform/api/internal/platform/events/outbox.go`)**
-   - `OutboxRelay.FlushBatch` reads up to 25 unpublished rows (`published_at IS NULL AND attempts < 10`), wraps each in the standard `contracts/events/envelope.schema.json` format (`event_id`, `event_type`, `schema_version`, `occurred_at`, `ingested_at`, `producer`, `payload`), and delivers it to:
-     - **AWS SNS** (`SNS_EVENTS_TOPIC_ARN`, SigV4-signed HTTPS `Publish` with `event_type` attribute) → **AWS SQS** (`SQS_INTELLIGENCE_QUEUE_URL`).
-     - **ML HTTP Ingestion** (`POST /v1/events/ingest`) when `ML_SERVICE_URL` is configured for sub-second local/direct propagation.
-   - Failed deliveries increment `attempts` and record `last_error` for retry; successful deliveries stamp `published_at`.
+### Backend API Hardening (`platform/api/internal/bootstrap/security.go`, `cmd/server/main.go`)
+- **Security Headers**: `Strict-Transport-Security`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-store` on `/api/*`.
+- **Rate Limiting & DoS Protection**: Per-IP token-bucket limiter (`120 req/min`, burst `40`, `429 Retry-After`), `2 MB` `MaxBytesReader` payload cap, and Slowloris HTTP timeouts (`ReadHeaderTimeout: 5s`, `IdleTimeout: 60s`, `MaxHeaderBytes: 64 KB`).
+- **PII Protection**: Raw GPS trajectories, phone numbers, bank account numbers, PAN, Aadhaar, and unmasked UPI IDs are never logged or stored in plaintext.
 
-3. **Idempotent Online Intelligence (`intelligence/ml-platform/src/nexora/events/sqs_worker.py`)**
-   - `run_sqs_consumer_loop` long-polls SQS (`WaitTimeSeconds=20`, `MaxNumberOfMessages=10`) while `/v1/events/ingest` accepts direct HTTP relays.
-   - `OnlineIntelligenceState.handle_event` deduplicates via `event_id`, unwraps SNS envelopes if present, routes by `event_type`, checkpoints state to disk, and updates live models in memory:
-     - `traffic.observed.v1` → updates `SpatioTemporalTrafficForecaster` segment speeds
-     - `location.observed.v1` / `location.batch` → cleans trajectories, indexes H3 cells, updates `MobilityDemandForecaster` & hotspot discovery
-     - `trip.started.v1` / `trip.completed.v1` / `route.feedback.v1` → updates demand & route quality feedback
-     - `hazard.reported.v1` → updates active road hazard ring buffer
-     - `finance.*` → feeds cross-domain finance event stream
-     - `voice.*` → feeds voice intelligence event stream
+---
 
-4. **Cache Invalidation & Real-Time UI Push (`Redis` + `SSE`)**
-   - Finance and Voice mutations call `invalidateAndBroadcast(ctx, userID, event)`, which deletes the cached snapshot (`fin:twin:v1:<userID>` or `voice:overview:v1:<userID>`) in Redis and pushes an event onto per-user subscriber channels streamed over `GET /api/v1/finance/stream` and `GET /api/v1/voice/stream` (SSE).
-   - Mobility trip breadcrumbs update Redis spatial geo sets for low-latency nearby active-trip radar queries.
+## 5. Event-Driven Outbox & Real-Time Flow
 
 ```mermaid
 sequenceDiagram
@@ -121,7 +135,7 @@ sequenceDiagram
     participant Bus as AWS SNS / SQS
     participant ML as Python ML (nexora-ml)
 
-    App->>API: POST /api/v1/{mobility|finance|voice}/...
+    App->>API: POST /api/v1/{mobility|finance|health|voice|privacy}/...
     activate API
     API->>DB: BEGIN TX -> Domain INSERT + INSERT platform.event_outbox -> COMMIT
     API-->>API: NotifyOutbox() + invalidateAndBroadcast()
@@ -132,7 +146,7 @@ sequenceDiagram
     API->>Bus: Publish event envelope (SNS -> SQS)
     API->>ML: POST /v1/events/ingest (optional inline relay)
     Bus->>ML: SQS 20s long-poll receives envelope
-    ML->>ML: Deduplicate event_id -> update traffic/demand/H3/finance/voice state
+    ML->>ML: Deduplicate event_id -> update traffic/demand/H3/finance/voice/health state
     API->>DB: UPDATE platform.event_outbox SET published_at = now()
 ```
 
@@ -155,83 +169,86 @@ sequenceDiagram
 | `voice.conversation.understood.v1` | Voice Pipeline | Publishes decisions, commitments & entities |
 | `voice.action.suggested.v1` | Voice Pipeline | Publishes human-in-the-loop follow-up suggestions |
 | `voice.evidence.sealed.v1` | Voice Vault | Publishes Merkle root & custody seal verification |
+| `health.*` | Health Repository | Streams sleep sessions, features & surrogate audit events |
 | `work.task.created.v1` | Work Module | Task lifecycle envelope |
 
 ---
 
-## Tech Stack
+## 6. Database Schema & Migrations (`platform/api/migrations/`)
+
+| Migration | Scope |
+|---|---|
+| `0001_initial_schema` | Core `platform` tables & `platform.event_outbox` |
+| `0002_mobility_feature1` | Mobility trips, routes, and road hazards |
+| `0003_mobility_intelligence` | Corridor telemetry & mobility intelligence tables |
+| `0004_seed_default_user` | Default user seed for single-tenant / preview workflows |
+| `0005_city_movement_intelligence` | City digital twin & H3 movement telemetry |
+| `0006_finance_intelligence` | `finance` accounts, transactions, channels, consents & digital twin |
+| `0007_voice_intelligence` | `voice` conversations, utterances, caller directory, call logs & custody events |
+| `0008_health_sleep_clearance` | `health` sleep sessions, sensor streams & clearance surrogate predictions |
+| `0009_health_outbox_audit` | Health outbox & scientific guardrail audit trail |
+| `0010_user_privacy_permissions` | `platform.user_privacy_permissions` & `platform.privacy_consent_audit` |
+
+---
+
+## 7. Tech Stack & Repository Layout
 
 | Layer | Technology |
 |---|---|
-| Mobile / Web | React Native (Expo) + TypeScript + React Query + Zustand + Native Caller/CallKit Config Plugin |
+| Mobile / Web | React Native (Expo SDK 58) + TypeScript + React Query + Zustand + Custom Android/iOS Native Plugins |
 | Control-Plane API | Go + Chi modular monolith (`platform/api`) |
-| Intelligence & ML | Python + FastAPI + PyTorch / NumPy / SciPy + Spatio-Temporal GNN + Conformal Predictors (`intelligence/ml-platform`, `intelligence/evaluation`) |
-| Primary DB | PostgreSQL 16 + PostGIS (per-module schemas `0001`–`0007` + transactional outbox) |
+| Intelligence & ML | Python + FastAPI + PyTorch / NumPy / SciPy (`intelligence/ml-platform`, `intelligence/evaluation`) |
+| Primary DB | PostgreSQL 16 + PostGIS |
 | Cache & Geo | Redis 7.4 |
 | Event Bus | PostgreSQL Outbox → AWS SNS / SQS (or Redpanda/Kafka locally) |
-| Document Store | AWS DynamoDB (serverless HTTPS) |
-| Object Storage | MinIO (local) / AWS S3 (presigned PUT/GET) |
-| Observability | Prometheus + Grafana |
+| Document & Object Store | AWS DynamoDB + AWS S3 / MinIO |
+| Edge & Observability | Caddy (TLS) + Prometheus + Grafana |
 
-## Repository Layout
-
-```
-apps/mobile/                Expo React Native app (Home, Explore, Copilot, Profile + Mobility, Finance, Voice & Privacy workspaces + plugins/withNexoraCallerId.js)
-platform/api/               Go modular monolith API (platform, identity, outbox, cache, mobility, finance, voice, health, work + migrations 0001-0007)
-intelligence/ml-platform/   FastAPI ML inference service, Deep Learning Hub (16 models), SQS event consumer, geospatial, finance & voice intelligence engines
-intelligence/evaluation/    Continuous learning verification & benchmark harness (drift detection, conformal empirical coverage, latency benchmarks)
+```text
+apps/mobile/                Expo React Native app (Home, Explore, Copilot, Profile, Integrations + native Kotlin/Swift plugins)
+platform/api/               Go modular monolith API (bootstrap security, identity, outbox, mobility, finance, voice, health, privacy, work)
+intelligence/ml-platform/   FastAPI ML inference service, Deep Learning Hub (16 models), SQS consumer, health/finance/voice/geo engines
+intelligence/evaluation/    Continuous learning verification & benchmark harness
 contracts/                  OpenAPI v1 spec (contracts/openapi/) + JSON event schemas (contracts/events/)
-infra/                      AWS SAM/Docker deploy templates, Postgres, Prometheus, Grafana configs
-scripts/                    Deployment & ops helper scripts (deploy-aws.sh)
+infra/                      AWS CloudFormation/Docker deploy templates, Postgres, Prometheus, Grafana configs
+scripts/                    SSM-based AWS deployment & lifecycle script (deploy-aws.sh)
 docs/                       Architecture blueprint, ADRs, runbooks
 ```
 
 ---
 
-## Quick Start
+## 8. Quick Start & Operations
 
-### 1. Local Full Stack (Docker Compose)
-
+### Local Full Stack (Docker Compose)
 ```bash
 cp .env.example .env
 make up           # starts postgres, redis, redpanda, minio, api (:8080), ml (:8000), prometheus (:9090), grafana (:3000)
 make ps
 
-# Health checks
 curl http://localhost:8080/api/v1/healthz
 curl http://localhost:8000/healthz
 ```
 
-### 2. Run Mobile / Web Client
-
+### Mobile Client & EAS Builds
 ```bash
 cd apps/mobile
 npm install
-npm run web       # or npm run ios / npm run android
+npm run typecheck
+npm run web       # or npm run android / npm run ios
 ```
 
-### 3. Tests, Typecheck & CI
-
+### Tests & CI
 ```bash
 make ci           # runs api-test (go vet + go test -race), ml-test (pytest), mobile-test (tsc --noEmit) & lint
-make api-test     # cd platform/api && go vet ./... && go test -race ./...
-make ml-test      # cd intelligence/ml-platform && python3 -m pytest -v
-make mobile-test  # cd apps/mobile && npm run typecheck
-make fmt          # cd platform/api && go fmt ./...
+make api-test
+make ml-test
+make mobile-test
 ```
 
-### 4. AWS Free-Tier Deployment
-
-Requires `.env.aws` (see `infra/aws/env.aws.example`):
-
+### AWS Free-Tier Deployment (`scripts/deploy-aws.sh`)
 ```bash
-make aws-deploy   # provisions/updates stack & deploys api + ml
-make aws-status
-make aws-logs
+./scripts/deploy-aws.sh smart     # auto-detect changed layers and deploy
+./scripts/deploy-aws.sh api       # fast-deploy Go API + migrations (~20-30s)
+./scripts/deploy-aws.sh ml        # fast-deploy Python ML service
+./scripts/deploy-aws.sh status    # stack outputs & live health
 ```
-
-## Conventions
-
-- **Contracts first:** `contracts/openapi/nexora-v1.yaml` and `contracts/events/` are the sources of truth.
-- **Boundary separation:** Go owns business logic, persistence, and outbox transactions; Python owns inference and online learning.
-- **Privacy by design:** Never log raw GPS coordinates, phone numbers, bank account numbers, PAN, Aadhaar, or unmasked UPI IDs.
