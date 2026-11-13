@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { colors, fontFamily, moduleColors, radii, spacing, typography } from '../../../app/theme/tokens';
@@ -29,21 +30,21 @@ const DOMAIN_META: Array<{
   {
     key: 'finance',
     title: 'Wealth & Finance',
-    sourceLabel: 'Account Aggregator · SMS / UPI Alert Parser',
+    sourceLabel: 'Account Aggregator · Notification Listener (Bank / UPI)',
     color: moduleColors.finance,
     route: 'Finance',
   },
   {
     key: 'health',
     title: 'Health & Sensors',
-    sourceLabel: 'Phone Motion (IMU) · Apple Health / Health Connect',
+    sourceLabel: 'Phone IMU · Light/Steps · Health Connect (HR, HRV, Sleep, SpO₂)',
     color: moduleColors.health,
     route: 'Health',
   },
   {
     key: 'voice',
-    title: 'Voice & Call Notes',
-    sourceLabel: 'Device Call Logs · Contacts · Caller ID',
+    title: 'Voice & Calendar',
+    sourceLabel: 'Device Call Logs · Calendar Events · Caller ID',
     color: moduleColors.voice,
     route: 'Voice',
   },
@@ -178,8 +179,40 @@ export default function IntegrationsScreen() {
             </Card>
           );
         })}
+
+        <SectionHeading title="Zero-Permission Document Import" />
+        <Card style={styles.domainCard}>
+          <Text style={styles.domainTitle}>Bank Statements & Lab Reports</Text>
+          <Text style={styles.summaryText}>
+            Pick a CSV, PDF, or text statement directly from your device without granting storage permissions.
+          </Text>
+          <DocumentImportRow />
+        </Card>
       </View>
     </Screen>
+  );
+}
+
+function DocumentImportRow() {
+  const [status, setStatus] = useState<string | null>(null);
+  const handlePick = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'application/pdf', 'text/plain'],
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const asset = res.assets[0];
+      setStatus(`Selected ${asset.name} (${Math.round((asset.size ?? 0) / 1024)} KB) — ready for ingestion`);
+    } catch {
+      setStatus('Could not open document picker');
+    }
+  };
+  return (
+    <View style={{ gap: spacing.xs, marginTop: spacing.xs }}>
+      <PrimaryButton title="Import CSV / PDF Statement" variant="secondary" onPress={() => void handlePick()} />
+      {status ? <Text style={styles.syncTime}>{status}</Text> : null}
+    </View>
   );
 }
 

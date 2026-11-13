@@ -50,6 +50,8 @@ module.exports = function withNexoraHealthSensors(config) {
       'android.permission.health.READ_HEART_RATE_VARIABILITY',
       'android.permission.health.READ_RESPIRATORY_RATE',
       'android.permission.health.READ_SLEEP',
+      'android.permission.health.READ_STEPS',
+      'android.permission.health.READ_OXYGEN_SATURATION',
     ];
     for (const perm of needed) {
       const exists = manifest['uses-permission'].some(p => p.$?.['android:name'] === perm);

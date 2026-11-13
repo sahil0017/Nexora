@@ -13,6 +13,14 @@ export type WearableHealthMetrics = {
   heart_rate_bpm?: number | null;
   hrv_rmssd_ms?: number | null;
   respiratory_rate_bpm?: number | null;
+  steps_count?: number | null;
+  spo2_pct?: number | null;
+  sleep_duration_hours?: number | null;
+  sleep_deep_minutes?: number | null;
+  sleep_rem_minutes?: number | null;
+  sleep_light_minutes?: number | null;
+  sleep_start_iso?: string | null;
+  sleep_end_iso?: string | null;
   measurement_status: 'measured' | 'unavailable';
   missing_reason?: string | null;
 };

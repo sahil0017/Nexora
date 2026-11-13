@@ -1,4 +1,5 @@
 import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
+import * as Calendar from 'expo-calendar';
 import * as Location from 'expo-location';
 import { create } from 'zustand';
 import { financeApi } from '../api/finance';
@@ -318,23 +319,74 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
         let imuSamples = 0;
         const features: Record<string, ProvenancedFeature> = {};
 
-        if (metrics && metrics.measurement_status === 'measured' && metrics.hrv_rmssd_ms != null) {
-          features.hrv_rmssd_ms = {
-            name: 'hrv_rmssd_ms',
-            value: metrics.hrv_rmssd_ms,
-            unit: 'ms',
-            provenance: {
-              source_device: Platform.OS,
-              signal_source: metrics.signal_source,
-              sampling_rate_hz: 1,
-              timestamp_accuracy_ms: 1000,
-              placement_protocol: 'wearable_bridge',
-              calibration_status: 'os_authorized',
-              signal_quality_score: 0.9,
-              measurement_status: 'measured',
-              algorithm_version: 'health_bridge_v1',
-            },
+        if (metrics && metrics.measurement_status === 'measured') {
+          const wearableProv = {
+            source_device: Platform.OS,
+            signal_source: metrics.signal_source,
+            sampling_rate_hz: 1,
+            timestamp_accuracy_ms: 1000,
+            placement_protocol: 'wearable_bridge',
+            calibration_status: 'os_authorized',
+            signal_quality_score: 0.9,
+            measurement_status: 'measured' as const,
+            algorithm_version: 'health_bridge_v1',
           };
+          if (metrics.hrv_rmssd_ms != null) {
+            features.hrv_rmssd_ms = {
+              name: 'hrv_rmssd_ms',
+              value: metrics.hrv_rmssd_ms,
+              unit: 'ms',
+              provenance: wearableProv,
+            };
+          }
+          if (metrics.heart_rate_bpm != null) {
+            features.heart_rate_bpm = {
+              name: 'heart_rate_bpm',
+              value: metrics.heart_rate_bpm,
+              unit: 'bpm',
+              provenance: wearableProv,
+            };
+          }
+          if (metrics.respiratory_rate_bpm != null) {
+            features.respiratory_rate_bpm = {
+              name: 'respiratory_rate_bpm',
+              value: metrics.respiratory_rate_bpm,
+              unit: 'brpm',
+              provenance: wearableProv,
+            };
+          }
+          if (metrics.steps_count != null) {
+            features.steps_count = {
+              name: 'steps_count',
+              value: metrics.steps_count,
+              unit: 'steps',
+              provenance: wearableProv,
+            };
+          }
+          if (metrics.spo2_pct != null) {
+            features.spo2_pct = {
+              name: 'spo2_pct',
+              value: metrics.spo2_pct,
+              unit: '%',
+              provenance: wearableProv,
+            };
+          }
+          if (metrics.sleep_duration_hours != null && metrics.sleep_duration_hours > 0) {
+            const totalMin = metrics.sleep_duration_hours * 60;
+            const deepFrac = Math.min(1, Math.max(0, (metrics.sleep_deep_minutes ?? 0) / totalMin));
+            try {
+              await healthApi.createSleepSession({
+                hardware_tier: 'wearable_ppg_imu',
+                is_simulated: false,
+                n3_fraction: Number(deepFrac.toFixed(3)),
+                respiratory_rate_bpm: metrics.respiratory_rate_bpm ?? undefined,
+                hrv_rmssd_ms: metrics.hrv_rmssd_ms ?? undefined,
+                signal_quality_score: 0.9,
+              });
+            } catch {
+              // Keep feature ingestion resilient if sleep session creation fails
+            }
+          }
         }
 
         // Capture a short real device IMU burst so phone motion/posture is ingested even without a wearable
@@ -368,7 +420,7 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           }
         }
 
-        if (imuSamples === 0 && Platform.OS !== 'web') {
+        if (Platform.OS !== 'web') {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const expoSensors = require('expo-sensors') as {
@@ -376,8 +428,16 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
                 setUpdateInterval: (ms: number) => void;
                 addListener: (cb: (d: { x: number; y: number; z: number }) => void) => { remove: () => void };
               };
+              LightSensor?: {
+                setUpdateInterval: (ms: number) => void;
+                addListener: (cb: (d: { illuminance: number }) => void) => { remove: () => void };
+              };
+              Pedometer?: {
+                isAvailableAsync: () => Promise<boolean>;
+                getStepCountAsync: (start: Date, end: Date) => Promise<{ steps: number }>;
+              };
             };
-            if (expoSensors?.Accelerometer) {
+            if (imuSamples === 0 && expoSensors?.Accelerometer) {
               const mags: number[] = [];
               expoSensors.Accelerometer.setUpdateInterval(50);
               const sub = expoSensors.Accelerometer.addListener(d => {
@@ -405,6 +465,59 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
                     algorithm_version: 'expo_imu_v1',
                   },
                 };
+              }
+            }
+            if (expoSensors?.LightSensor) {
+              let lux: number | null = null;
+              expoSensors.LightSensor.setUpdateInterval(200);
+              const lightSub = expoSensors.LightSensor.addListener(d => {
+                lux = d.illuminance;
+              });
+              await new Promise(resolve => setTimeout(resolve, 350));
+              lightSub.remove();
+              if (lux != null) {
+                features.ambient_lux = {
+                  name: 'ambient_lux',
+                  value: Number(Number(lux).toFixed(1)),
+                  unit: 'lux',
+                  provenance: {
+                    source_device: Platform.OS,
+                    signal_source: 'phone_light_sensor',
+                    sampling_rate_hz: 5,
+                    timestamp_accuracy_ms: 200,
+                    placement_protocol: 'ambient',
+                    calibration_status: 'factory',
+                    signal_quality_score: 0.9,
+                    measurement_status: 'measured',
+                    algorithm_version: 'expo_light_v1',
+                  },
+                };
+              }
+            }
+            if (!features.steps_count && expoSensors?.Pedometer) {
+              const pedAvail = await expoSensors.Pedometer.isAvailableAsync().catch(() => false);
+              if (pedAvail) {
+                const end = new Date();
+                const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+                const stepRes = await expoSensors.Pedometer.getStepCountAsync(start, end).catch(() => null);
+                if (stepRes && stepRes.steps > 0) {
+                  features.steps_count = {
+                    name: 'steps_count',
+                    value: stepRes.steps,
+                    unit: 'steps',
+                    provenance: {
+                      source_device: Platform.OS,
+                      signal_source: 'phone_pedometer',
+                      sampling_rate_hz: 1,
+                      timestamp_accuracy_ms: 1000,
+                      placement_protocol: 'pocket_or_handheld',
+                      calibration_status: 'os_authorized',
+                      signal_quality_score: 0.9,
+                      measurement_status: 'measured',
+                      algorithm_version: 'expo_pedometer_v1',
+                    },
+                  };
+                }
               }
             }
           } catch {
@@ -488,6 +601,24 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             importedCount = res.contacts.length;
           }
         }
+        let calendarEventsCount = 0;
+        if (Platform.OS !== 'web') {
+          try {
+            const calPerm = await Calendar.requestCalendarPermissionsAsync();
+            if (calPerm.status === 'granted') {
+              const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+              const calIds = cals.map(c => c.id);
+              if (calIds.length > 0) {
+                const now = new Date();
+                const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+                const events = await Calendar.getEventsAsync(calIds, now, tomorrow);
+                calendarEventsCount = events.length;
+              }
+            }
+          } catch {
+            // Calendar optional
+          }
+        }
         const ov = await voiceApi.overview();
         set(state => ({
           domains: {
@@ -495,8 +626,8 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
             voice: {
               status: 'connected',
               lastSyncAt: nowIso(),
-              summary: `${ov.conversation_count} conversations · ${importedCount} device record(s) ingested${deviceNote}`,
-              recordsSynced: ov.conversation_count + importedCount,
+              summary: `${ov.conversation_count} conversations · ${importedCount} device call(s) · ${calendarEventsCount} calendar event(s)${deviceNote}`,
+              recordsSynced: ov.conversation_count + importedCount + calendarEventsCount,
             },
           },
         }));

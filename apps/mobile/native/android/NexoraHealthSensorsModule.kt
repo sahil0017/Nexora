@@ -11,7 +11,10 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
+import androidx.health.connect.client.records.OxygenSaturationRecord
 import androidx.health.connect.client.records.RespiratoryRateRecord
+import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.facebook.react.bridge.Arguments
@@ -198,7 +201,10 @@ class NexoraHealthSensorsModule(private val reactContext: ReactApplicationContex
     val requiredPerms = setOf(
       HealthPermission.getReadPermission(HeartRateRecord::class),
       HealthPermission.getReadPermission(HeartRateVariabilityRmssdRecord::class),
-      HealthPermission.getReadPermission(RespiratoryRateRecord::class)
+      HealthPermission.getReadPermission(RespiratoryRateRecord::class),
+      HealthPermission.getReadPermission(SleepSessionRecord::class),
+      HealthPermission.getReadPermission(StepsRecord::class),
+      HealthPermission.getReadPermission(OxygenSaturationRecord::class)
     )
 
     CoroutineScope(Dispatchers.IO).launch {
@@ -244,13 +250,62 @@ class NexoraHealthSensorsModule(private val reactContext: ReactApplicationContex
           respBpm = respResp.records.lastOrNull()?.rate
         }
 
-        val hasAny = hrBpm != null || hrvMs != null || respBpm != null
+        var stepsCount: Long? = null
+        if (granted.contains(HealthPermission.getReadPermission(StepsRecord::class))) {
+          val stepsResp = client.readRecords(ReadRecordsRequest(StepsRecord::class, timeRangeFilter = range))
+          if (stepsResp.records.isNotEmpty()) {
+            stepsCount = stepsResp.records.sumOf { it.count }
+          }
+        }
+
+        var spo2Pct: Double? = null
+        if (granted.contains(HealthPermission.getReadPermission(OxygenSaturationRecord::class))) {
+          val spo2Resp = client.readRecords(ReadRecordsRequest(OxygenSaturationRecord::class, timeRangeFilter = range))
+          spo2Pct = spo2Resp.records.lastOrNull()?.percentage?.value
+        }
+
+        var sleepHours: Double? = null
+        var sleepDeepMin = 0.0
+        var sleepRemMin = 0.0
+        var sleepLightMin = 0.0
+        var sleepStartIso: String? = null
+        var sleepEndIso: String? = null
+        if (granted.contains(HealthPermission.getReadPermission(SleepSessionRecord::class))) {
+          val sleepResp = client.readRecords(ReadRecordsRequest(SleepSessionRecord::class, timeRangeFilter = range))
+          val latestSleep = sleepResp.records.lastOrNull()
+          if (latestSleep != null) {
+            val totalMin = ChronoUnit.MINUTES.between(latestSleep.startTime, latestSleep.endTime).coerceAtLeast(0L)
+            sleepHours = totalMin / 60.0
+            sleepStartIso = latestSleep.startTime.toString()
+            sleepEndIso = latestSleep.endTime.toString()
+            for (stage in latestSleep.stages) {
+              val mins = ChronoUnit.MINUTES.between(stage.startTime, stage.endTime).coerceAtLeast(0L).toDouble()
+              when (stage.stage) {
+                SleepSessionRecord.STAGE_TYPE_DEEP -> sleepDeepMin += mins
+                SleepSessionRecord.STAGE_TYPE_REM -> sleepRemMin += mins
+                SleepSessionRecord.STAGE_TYPE_LIGHT -> sleepLightMin += mins
+              }
+            }
+          }
+        }
+
+        val hasAny = hrBpm != null || hrvMs != null || respBpm != null || stepsCount != null || spo2Pct != null || sleepHours != null
         val out = Arguments.createMap().apply {
           putString("signal_source", "health_connect")
           putBoolean("authorized", true)
           if (hrBpm != null) putDouble("heart_rate_bpm", hrBpm)
           if (hrvMs != null) putDouble("hrv_rmssd_ms", hrvMs)
           if (respBpm != null) putDouble("respiratory_rate_bpm", respBpm)
+          if (stepsCount != null) putDouble("steps_count", stepsCount.toDouble())
+          if (spo2Pct != null) putDouble("spo2_pct", spo2Pct)
+          if (sleepHours != null) {
+            putDouble("sleep_duration_hours", sleepHours)
+            putDouble("sleep_deep_minutes", sleepDeepMin)
+            putDouble("sleep_rem_minutes", sleepRemMin)
+            putDouble("sleep_light_minutes", sleepLightMin)
+            if (sleepStartIso != null) putString("sleep_start_iso", sleepStartIso)
+            if (sleepEndIso != null) putString("sleep_end_iso", sleepEndIso)
+          }
           putString("measurement_status", if (hasAny) "measured" else "unavailable")
           if (!hasAny) putString("missing_reason", "no_recent_health_connect_samples")
         }
