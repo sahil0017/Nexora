@@ -47,6 +47,13 @@ function nowIso(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
 let mobilityWatchSub: Location.LocationSubscription | null = null;
 let mobilityIngestedTotal = 0;
 
@@ -85,7 +92,30 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
 
     try {
       if (domain === 'mobility') {
-        const perm = await Location.requestForegroundPermissionsAsync();
+        const servicesOn = await withTimeout(
+          Location.hasServicesEnabledAsync(),
+          3000,
+          'Location services check timed out',
+        ).catch(() => true);
+        if (!servicesOn) {
+          set(state => ({
+            domains: {
+              ...state.domains,
+              mobility: {
+                status: 'needs_access',
+                lastSyncAt: nowIso(),
+                summary: 'Turn on device Location (GPS) to sync traffic & hazards',
+                recordsSynced: 0,
+              },
+            },
+          }));
+          return;
+        }
+        const perm = await withTimeout(
+          Location.requestForegroundPermissionsAsync(),
+          5000,
+          'Location permission prompt timed out',
+        );
         if (perm.status !== 'granted') {
           set(state => ({
             domains: {
@@ -101,18 +131,18 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           return;
         }
         perms.setPermission('gpsLocation', true);
-        const lastKnown = await Promise.race([
+        const lastKnown = await withTimeout(
           Location.getLastKnownPositionAsync(),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
-        ]);
+          2500,
+          'lastKnown timeout',
+        ).catch(() => null);
         const pos =
           lastKnown ??
-          (await Promise.race([
+          (await withTimeout(
             Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('GPS fix timed out — enable device Location')), 7000),
-            ),
-          ]));
+            6500,
+            'GPS fix timed out — turn on Location / High Accuracy and retry',
+          ));
         const pt = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         let ingestedSamples = 0;
         try {
@@ -146,55 +176,55 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           },
         }));
 
-        // Start continuous real-time GPS watcher when autoSyncEnabled is on
+        // Start continuous real-time GPS watcher in background without blocking syncDomain
         if (get().autoSyncEnabled && !mobilityWatchSub && Platform.OS !== 'web') {
-          try {
-            mobilityWatchSub = await Location.watchPositionAsync(
-              {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: 20000,
-                distanceInterval: 25,
-              },
-              async loc => {
-                if (!get().autoSyncEnabled) {
-                  stopMobilityWatch();
-                  return;
-                }
-                try {
-                  const livePt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-                  const res = (await digitalTwinApi.sendPrivacyTelemetry([
-                    {
-                      latitude: livePt.latitude,
-                      longitude: livePt.longitude,
-                      speed_kph: loc.coords.speed != null && loc.coords.speed >= 0 ? loc.coords.speed * 3.6 : 0,
+          void Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.Balanced,
+              timeInterval: 20000,
+              distanceInterval: 25,
+            },
+            async loc => {
+              if (!get().autoSyncEnabled) {
+                stopMobilityWatch();
+                return;
+              }
+              try {
+                const livePt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+                const res = (await digitalTwinApi.sendPrivacyTelemetry([
+                  {
+                    latitude: livePt.latitude,
+                    longitude: livePt.longitude,
+                    speed_kph: loc.coords.speed != null && loc.coords.speed >= 0 ? loc.coords.speed * 3.6 : 0,
+                  },
+                ])) as { input_samples?: number };
+                mobilityIngestedTotal += res.input_samples ?? 1;
+                const [sRes, hRes] = await Promise.allSettled([
+                  moveApi.trafficSegments(livePt, 3000),
+                  moveApi.nearbyHazards(livePt),
+                ]);
+                const sc = sRes.status === 'fulfilled' ? (sRes.value.segments?.length ?? 0) : 0;
+                const hc = hRes.status === 'fulfilled' ? (hRes.value.hazards?.length ?? 0) : 0;
+                set(state => ({
+                  domains: {
+                    ...state.domains,
+                    mobility: {
+                      status: 'connected',
+                      lastSyncAt: nowIso(),
+                      summary: `${mobilityIngestedTotal} live GPS fix(es) · ${sc} corridors · ${hc} alerts`,
+                      recordsSynced: mobilityIngestedTotal + sc + hc,
                     },
-                  ])) as { input_samples?: number };
-                  mobilityIngestedTotal += res.input_samples ?? 1;
-                  const [sRes, hRes] = await Promise.allSettled([
-                    moveApi.trafficSegments(livePt, 3000),
-                    moveApi.nearbyHazards(livePt),
-                  ]);
-                  const sc = sRes.status === 'fulfilled' ? (sRes.value.segments?.length ?? 0) : 0;
-                  const hc = hRes.status === 'fulfilled' ? (hRes.value.hazards?.length ?? 0) : 0;
-                  set(state => ({
-                    domains: {
-                      ...state.domains,
-                      mobility: {
-                        status: 'connected',
-                        lastSyncAt: nowIso(),
-                        summary: `${mobilityIngestedTotal} live GPS fix(es) · ${sc} corridors · ${hc} alerts`,
-                        recordsSynced: mobilityIngestedTotal + sc + hc,
-                      },
-                    },
-                  }));
-                } catch {
-                  // Keep watcher alive across transient network blips
-                }
-              },
-            );
-          } catch {
-            // Watcher optional if OS restricts background/continuous updates
-          }
+                  },
+                }));
+              } catch {
+                // Keep watcher alive across transient network blips
+              }
+            },
+          )
+            .then(sub => {
+              mobilityWatchSub = sub;
+            })
+            .catch(() => {});
         }
         return;
       }
@@ -504,7 +534,9 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
         const streamCount = streamsRes.status === 'fulfilled' ? (streamsRes.value.streams?.length ?? 0) : 0;
         const isLive = Boolean(bridge?.available || ingested > 0 || streamCount > 0 || total > 0 || imuSamples > 0);
         const bridgeLabel = bridge?.available
-          ? `${bridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'} linked`
+          ? metrics?.authorized
+            ? `${bridge.source === 'healthkit' ? 'Apple Health' : 'Health Connect'} linked`
+            : `${imuSamples > 0 ? `Phone IMU (${imuSamples} samples)` : 'Sensors ready'} · Link Samsung Health via Health Connect`
           : imuSamples > 0
             ? `Phone IMU (${imuSamples} samples)`
             : 'Sensors ready';

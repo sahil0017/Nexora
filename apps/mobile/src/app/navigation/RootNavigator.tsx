@@ -3,6 +3,7 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fontFamily } from '../theme/tokens';
 import { NavIcon, NavIconName } from '../../shared/components/NavIcons';
 import HomeScreen from '../../features/home/screens/HomeScreen';
@@ -34,6 +35,9 @@ const navTheme = {
 };
 
 function Tabs() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 8);
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -45,9 +49,9 @@ function Tabs() {
           backgroundColor: '#081018',
           borderTopColor: colors.borderSubtle,
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 7,
-          paddingTop: 5,
+          height: 56 + bottomInset,
+          paddingBottom: bottomInset,
+          paddingTop: 6,
         },
       }}>
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: tabIcon('Home') }} />
