@@ -101,24 +101,33 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           return;
         }
         perms.setPermission('gpsLocation', true);
-        const lastKnown = await Location.getLastKnownPositionAsync();
+        const lastKnown = await Promise.race([
+          Location.getLastKnownPositionAsync(),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
+        ]);
         const pos =
           lastKnown ??
           (await Promise.race([
-            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('GPS fix timed out — enable device Location')), 10000),
+              setTimeout(() => reject(new Error('GPS fix timed out — enable device Location')), 7000),
             ),
           ]));
         const pt = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-        const telemetryRes = (await digitalTwinApi.sendPrivacyTelemetry([
-          {
-            latitude: pt.latitude,
-            longitude: pt.longitude,
-            speed_kph: pos.coords.speed != null && pos.coords.speed >= 0 ? pos.coords.speed * 3.6 : 0,
-          },
-        ])) as { input_samples?: number; published_count?: number; suppressed_count?: number };
-        mobilityIngestedTotal += telemetryRes.input_samples ?? 1;
+        let ingestedSamples = 0;
+        try {
+          const telemetryRes = (await digitalTwinApi.sendPrivacyTelemetry([
+            {
+              latitude: pt.latitude,
+              longitude: pt.longitude,
+              speed_kph: pos.coords.speed != null && pos.coords.speed >= 0 ? pos.coords.speed * 3.6 : 0,
+            },
+          ])) as { input_samples?: number; published_count?: number; suppressed_count?: number };
+          ingestedSamples = telemetryRes.input_samples ?? 1;
+          mobilityIngestedTotal += ingestedSamples;
+        } catch {
+          // Continue to corridors & hazards even if telemetry ingest blips
+        }
         const [segsRes, hazRes] = await Promise.allSettled([
           moveApi.trafficSegments(pt, 3000),
           moveApi.nearbyHazards(pt),
@@ -462,17 +471,29 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
           }
         }
 
-        if (Object.keys(features).length > 0) {
-          await healthApi.ingestFeatures({
-            hardware_tier: metrics?.measurement_status === 'measured' ? 'wearable_ppg_imu' : 'consumer_phone_sensors',
-            sample_rate_hz: imuSamples > 0 ? 25 : 1,
-            is_simulated: false,
-            device_timestamp_ms: Date.now(),
-            monotonic_ms: Date.now(),
-            sync_uncertainty_ms: 50,
-            extracted_features: features,
-          });
-          ingested = Object.keys(features).length;
+        let ingestNote = '';
+        const sanitizedFeatures: Record<string, ProvenancedFeature> = {};
+        for (const [k, feat] of Object.entries(features)) {
+          if (Number.isFinite(feat.value)) {
+            sanitizedFeatures[k] = feat;
+          }
+        }
+        if (Object.keys(sanitizedFeatures).length > 0) {
+          try {
+            await healthApi.ingestFeatures({
+              user_id: 'default-user',
+              hardware_tier: metrics?.measurement_status === 'measured' ? 'wearable_ppg_imu' : 'consumer_phone_sensors',
+              sample_rate_hz: imuSamples > 0 ? 25 : 1,
+              is_simulated: false,
+              device_timestamp_ms: Date.now(),
+              monotonic_ms: Date.now(),
+              sync_uncertainty_ms: 50,
+              extracted_features: sanitizedFeatures,
+            });
+            ingested = Object.keys(sanitizedFeatures).length;
+          } catch (ingestErr: any) {
+            ingestNote = ingestErr?.message ? ` (${String(ingestErr.message)})` : '';
+          }
         }
 
         const [sessionsRes, streamsRes] = await Promise.allSettled([
@@ -494,7 +515,7 @@ export const useRealtimeIntegrations = create<IntegrationsStore>((set, get) => (
               status: isLive ? 'connected' : 'needs_access',
               lastSyncAt: nowIso(),
               summary: isLive
-                ? `${bridgeLabel} · ${streamCount} streams · ${total} nights`
+                ? `${bridgeLabel} · ${streamCount} streams · ${total} nights${ingestNote}`
                 : 'Install Health Connect / pair watch or start Live Sensors',
               recordsSynced: ingested + streamCount + total,
             },
