@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Screen } from '../../../shared/components/Screen';
@@ -14,6 +14,7 @@ import { voiceApi } from '../../../core/api/voice';
 import { getAuthToken, setAuthToken } from '../../../core/api/client';
 import { useMe } from '../../../core/auth/useMe';
 import { usePrivacyPermissions } from '../../../core/permissions/usePrivacyPermissions';
+import { useAppSecurity } from '../../../core/security/appSecurity';
 import { useNavPreferences } from '../../../core/state/useNavPreferences';
 import { formatINR } from '../../finance/components/FinanceIntelligencePanels';
 import { HealthMetricBar, SparklineChart } from '../../health/components/HealthVisualizations';
@@ -332,6 +333,10 @@ export default function ProfileScreen() {
 
           <View style={styles.divider} />
 
+          <SecurityControlsBlock />
+
+          <View style={styles.divider} />
+
           <Tappable onPress={() => nav.navigate('Finance', { screen: 'FinLedger' })} style={styles.between}>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Private Financial Protection</Text>
@@ -439,3 +444,50 @@ const styles = StyleSheet.create({
   upcomingTitle: { color: colors.textPrimary, fontFamily: fontFamily.medium, fontSize: 12.5, fontWeight: '600' },
   upcomingTag: { color: colors.textMuted, fontFamily: fontFamily.sans, fontSize: 10.5, marginTop: 2 },
 });
+
+function SecurityControlsBlock() {
+  const {
+    biometricSupported,
+    biometricLockEnabled,
+    screenshotProtectionEnabled,
+    setBiometricLockEnabled,
+    setScreenshotProtectionEnabled,
+  } = useAppSecurity();
+
+  return (
+    <View style={{ gap: spacing.s }}>
+      <View style={styles.between}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Biometric Vault Lock</Text>
+          <Text style={styles.sub}>
+            {biometricSupported
+              ? 'Require Face ID / Fingerprint when returning to NEXORA'
+              : 'Biometric hardware not enrolled on this device'}
+          </Text>
+        </View>
+        <Switch
+          value={biometricLockEnabled}
+          disabled={!biometricSupported}
+          onValueChange={val => void setBiometricLockEnabled(val)}
+          trackColor={{ false: colors.bgElevated, true: colors.accentBright }}
+        />
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.between}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Screen & Recording Shield</Text>
+          <Text style={styles.sub}>
+            Block screenshots & app-switcher previews (FLAG_SECURE + Keystore)
+          </Text>
+        </View>
+        <Switch
+          value={screenshotProtectionEnabled}
+          onValueChange={val => void setScreenshotProtectionEnabled(val)}
+          trackColor={{ false: colors.bgElevated, true: colors.accentBright }}
+        />
+      </View>
+    </View>
+  );
+}

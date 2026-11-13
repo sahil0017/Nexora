@@ -20,10 +20,13 @@ func main() {
 
 	app := bootstrap.New(logger)
 	srv := &http.Server{
-		Addr:         ":" + app.Config.HTTPPort,
-		Handler:      app.Router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:              ":" + app.Config.HTTPPort,
+		Handler:           app.Router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 16,
 	}
 
 	go func() {

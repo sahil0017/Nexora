@@ -76,6 +76,9 @@ func New(logger *slog.Logger) *App {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(securityHeadersMiddleware)
+	r.Use(maxBodyMiddleware(2 << 20))
+	r.Use(newIPRateLimiter(120, 40).middleware)
 	r.Use(corsMiddleware)
 
 	httpapi.RegisterRoutes(r, cfg, logger, pg, docs)
