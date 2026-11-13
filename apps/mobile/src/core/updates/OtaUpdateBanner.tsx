@@ -1,38 +1,64 @@
-import React, { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { AppState, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as Updates from 'expo-updates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fontFamily, radii, spacing } from '../../app/theme/tokens';
 
 /**
- * Checks Expo OTA updates on launch and displays an in-app notification
- * banner so the user can restart & apply the new bundle in one tap.
+ * Listens to Expo OTA update state (`useUpdates`) and checks on launch +
+ * foreground resume so the user gets an in-app banner to restart in one tap.
  */
 export function OtaUpdateBanner() {
   const insets = useSafeAreaInsets();
-  const [ready, setReady] = useState(false);
+  const { isUpdateAvailable, isUpdatePending } = Updates.useUpdates();
+  const [fetchedNew, setFetchedNew] = useState(false);
+  const lastCheckRef = useRef(0);
 
   useEffect(() => {
     if (Platform.OS === 'web' || __DEV__ || !Updates.isEnabled) return;
     let active = true;
-    (async () => {
+
+    const checkAndFetch = async () => {
+      const now = Date.now();
+      if (now - lastCheckRef.current < 15_000) return;
+      lastCheckRef.current = now;
       try {
         const check = await Updates.checkForUpdateAsync();
         if (!check.isAvailable) return;
         const fetched = await Updates.fetchUpdateAsync();
         if (active && fetched.isNew) {
-          setReady(true);
+          setFetchedNew(true);
         }
       } catch {
         // Ignore transient network errors when checking OTA updates
       }
-    })();
+    };
+
+    void checkAndFetch();
+    const sub = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        void checkAndFetch();
+      }
+    });
+
     return () => {
       active = false;
+      sub.remove();
     };
   }, []);
 
-  if (!ready) return null;
+  useEffect(() => {
+    if (Platform.OS === 'web' || __DEV__ || !Updates.isEnabled) return;
+    if (isUpdateAvailable && !isUpdatePending) {
+      void Updates.fetchUpdateAsync()
+        .then(res => {
+          if (res.isNew) setFetchedNew(true);
+        })
+        .catch(() => {});
+    }
+  }, [isUpdateAvailable, isUpdatePending]);
+
+  if (!isUpdatePending && !fetchedNew) return null;
 
   return (
     <View style={[styles.banner, { top: Math.max(insets.top, 8) + 6 }]}>
