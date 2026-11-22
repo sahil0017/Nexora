@@ -51,7 +51,7 @@ jobs:
       need_migrate: ${{ steps.plan.outputs.need_migrate }}
       need_config: ${{ steps.plan.outputs.need_config }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -148,10 +148,10 @@ jobs:
       STACK: ${{ vars.AWS_STACK_NAME || 'nexora-free-tier' }}
       RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -163,11 +163,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: needs.plan.outputs.need_api == 'true' || needs.plan.outputs.need_ml == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push Go API image to ECR
         if: needs.plan.outputs.need_api == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: platform/api
           push: true
@@ -177,7 +177,7 @@ jobs:
 
       - name: Build and push Python ML image to ECR
         if: needs.plan.outputs.need_ml == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: intelligence/ml-platform
           push: true
